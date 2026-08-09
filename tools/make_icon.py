@@ -147,13 +147,11 @@ def build_box(body_color, behind, groups):
 #
 # A flat screen viewed slightly from the left: the front (the left face in this
 # projection) is almost all screen, showing colour bars, with a thin dark
-# bezel, a shallow 3D edge along the top and right, and a small stand
-# underneath. Drawn the BeOS way - solid-colour styles on straight closed paths
+# bezel and a shallow 3D edge along the top and right. Drawn the BeOS way - solid-colour styles on straight closed paths
 # over the 0..64 grid - so it reads as a flat TV at 16 pixels.
 
 CABINET = (54, 58, 66, 255)          # the frame around the screen
 BEZEL = (26, 28, 34, 255)            # the black surround
-STAND = (74, 78, 86, 255)            # neck and base
 
 # A SMPTE-style colour-bar test pattern, the one thing that says "television"
 # at a glance. Seven vertical bars across the screen.
@@ -166,14 +164,6 @@ BARS = [
     (214, 82, 82, 255),              # red
     (98, 120, 214, 255),             # blue
 ]
-
-
-def stand():
-    """A neck and a base under the front, so the panel stands rather than
-    floats. Absolute coordinates - it sits below the box."""
-    neck = [(33.0, 43.0), (37.0, 44.0), (37.0, 50.0), (33.0, 49.0)]
-    base = [(26.0, 50.0), (44.0, 51.0), (47.0, 54.0), (23.0, 54.0)]
-    return [neck, base]
 
 
 def screen():
@@ -200,10 +190,7 @@ if __name__ == "__main__":
     for color, bar in zip(BARS, bars):
         groups.append((color, [bar]))
 
-    data, count = build_box(
-        CABINET,
-        [(STAND, stand())],
-        groups)
+    data, count = build_box(CABINET, [], groups)
 
     root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
     path = os.path.join(root, "src", "app.rdef")
