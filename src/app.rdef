@@ -1,0 +1,34 @@
+resource app_signature "application/x-vnd.ROneSeg";
+
+resource app_flags B_SINGLE_LAUNCH;
+
+resource app_version {
+	major	= 0,
+	middle	= 1,
+	minor	= 0,
+
+	/* 0 = development	1 = alpha		2 = beta
+	   3 = gamma		4 = golden master	5 = final */
+	variety	 = 0,
+	internal = 0,
+
+	short_info = "R One-Seg",
+	long_info = "R One-Seg - ISDB-T 1seg receiver for Haiku"
+};
+
+/*
+ * Do not edit the bytes below. They come from tools/make_icon.py, which
+ * rewrites this block in place; change the shape coordinates and colours
+ * there and re-run it.
+ */
+resource vector_icon {
+	$"6E6369660C01363A42FF01292C32FF011C1E22FF014A4E56FF011A1C22FF01EC"
+	$"ECECFF01E6CE60FF0160C6D6FF016CC878FF01CE68C4FF01D65252FF016278D6"
+	$"FF0D0A04414B454C455241510A043A524C534F5637560A04362A503250503648"
+	$"0A04562F50325050564D0A043C27562F5032362A0A04372B4F334F4B37440A04"
+	$"392E3C2F3C4339420A043C2F3F303F443C430A043F30423142443F440A044231"
+	$"4432444542440A0444324732474644450A0447324A334A4747460A044A334D34"
+	$"4D484A470C0A03020001000A010102000A020103000A000104000A040105000A"
+	$"050106000A060107000A070108000A080109000A09010A000A0A010B000A0B01"
+	$"0C00"
+};

@@ -1,0 +1,9 @@
+# Build output
+objects.*/
+AGENTS.md
+recovery/
+*.asm
+*.iso
+*.log
+tuner-capture.ts
+oneseg-test.ts
