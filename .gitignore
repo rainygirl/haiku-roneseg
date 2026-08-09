@@ -1,6 +1,7 @@
 # Build output
 objects.*/
 AGENTS.md
+AGENTS.ja.md
 recovery/
 *.asm
 *.iso
