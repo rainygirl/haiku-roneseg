@@ -124,6 +124,15 @@ public:
 	uint8 FrequencyRegisterLow() const { return fFrequencyRegLow; }
 	uint8 LatchValue() const { return fLatchValue; }
 
+	// The frequency-word layout, persisted to
+	// ~/config/settings/roneseg/settings. Once a sweep has found the layout
+	// that receives, it has to survive a restart - a field answer that has to
+	// be re-derived on every launch is not an answer. Saving is explicit
+	// rather than a side effect of the setters, because a sweep runs through
+	// every candidate and must not write the losing ones to disk.
+	status_t LoadSettings();
+	status_t SaveSettings() const;
+
 	// One layout the frequency word might use. The sweep walks these against a
 	// channel known to be on air and keeps whichever one produces a transport
 	// stream - which is the only way this question gets answered.

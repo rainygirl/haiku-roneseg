@@ -1,7 +1,12 @@
 #include "UsbTuner.h"
 
 #include <Autolock.h>
+#include <Directory.h>
+#include <File.h>
+#include <FindDirectory.h>
+#include <Message.h>
 #include <OS.h>
+#include <Path.h>
 
 #include <math.h>
 #include <stdio.h>
@@ -95,6 +100,28 @@ const UsbTuner::TuningCandidate kTuningCandidates[] = {
 	{ 0x66, 0x67, 0x01 },
 	{ 0x34, 0x35, 0x01 },
 };
+
+
+// ~/config/settings/roneseg/settings, where the frequency-word layout is kept.
+// The same directory the firmware image lives in.
+status_t
+SettingsPath(BPath* path, bool createDirectory)
+{
+	status_t status = find_directory(B_USER_SETTINGS_DIRECTORY, path);
+	if (status != B_OK)
+		return status;
+	status = path->Append("roneseg");
+	if (status != B_OK)
+		return status;
+	if (createDirectory)
+		create_directory(path->Path(), 0755);
+	return path->Append("settings");
+}
+
+
+const char* kSettingHigh = "frequency register high";
+const char* kSettingLow = "frequency register low";
+const char* kSettingLatch = "latch value";
 
 
 std::string
@@ -264,6 +291,65 @@ UsbTuner::ProfileFor(uint16 vendor, uint16 product)
 		}
 	}
 	return NULL;
+}
+
+
+status_t
+UsbTuner::LoadSettings()
+{
+	BPath path;
+	status_t status = SettingsPath(&path, false);
+	if (status != B_OK)
+		return status;
+
+	BFile file(path.Path(), B_READ_ONLY);
+	status = file.InitCheck();
+	if (status != B_OK)
+		return status;			// no settings yet: the defaults stand
+
+	BMessage settings;
+	status = settings.Unflatten(&file);
+	if (status != B_OK)
+		return status;
+
+	// Each value is taken only if it is there and in range, so a truncated or
+	// hand-edited file degrades to the compiled-in defaults rather than
+	// putting the tuner somewhere impossible.
+	int32 value;
+	if (settings.FindInt32(kSettingHigh, &value) == B_OK
+		&& value >= 0 && value <= 0xFF) {
+		fFrequencyReg = (uint8)value;
+	}
+	if (settings.FindInt32(kSettingLow, &value) == B_OK
+		&& value >= 0 && value <= 0xFF) {
+		fFrequencyRegLow = (uint8)value;
+	}
+	if (settings.FindInt32(kSettingLatch, &value) == B_OK
+		&& value >= 0 && value <= 0xFF) {
+		fLatchValue = (uint8)value;
+	}
+	return B_OK;
+}
+
+
+status_t
+UsbTuner::SaveSettings() const
+{
+	BPath path;
+	status_t status = SettingsPath(&path, true);
+	if (status != B_OK)
+		return status;
+
+	BMessage settings;
+	settings.AddInt32(kSettingHigh, fFrequencyReg);
+	settings.AddInt32(kSettingLow, fFrequencyRegLow);
+	settings.AddInt32(kSettingLatch, fLatchValue);
+
+	BFile file(path.Path(), B_CREATE_FILE | B_ERASE_FILE | B_WRITE_ONLY);
+	status = file.InitCheck();
+	if (status != B_OK)
+		return status;
+	return settings.Flatten(&file);
 }
 
 

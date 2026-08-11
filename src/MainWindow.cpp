@@ -83,7 +83,11 @@ MainWindow::MainWindow(const std::string& capturePath)
 		// the window is running its own message loop, not during construction.
 		PostMessage(kMsgTune);
 	} else {
-		fTuner = new UsbTuner();
+		UsbTuner* usb = new UsbTuner();
+		// Whatever layout was last chosen - by hand or by a sweep - comes back
+		// with the app. Absent or unreadable settings leave the defaults.
+		usb->LoadSettings();
+		fTuner = usb;
 		SetStatusText("no tuner opened - press U for the USB report");
 		fVideoView->SetPlaceholder("no tuner");
 	}
@@ -547,11 +551,13 @@ MainWindow::ApplySettings(BMessage* message)
 
 		usb->SetFrequencyRegisters(high, low);
 		usb->SetLatchValue(latch);
+		bool saved = usb->SaveSettings() == B_OK;
 
-		char status[128];
+		char status[160];
 		snprintf(status, sizeof(status),
-			"周波数レジスタ 0x%02x/0x%02x, ラッチ 0x%02x - 再スキャンしてください",
-			high, low, latch);
+			"周波数レジスタ 0x%02x/0x%02x, ラッチ 0x%02x%s - "
+			"再スキャンしてください", high, low, latch,
+			saved ? " (保存しました)" : " (保存できませんでした)");
 		SetStatusText(status);
 	}
 	if (fSettingsPanel != NULL) {
@@ -691,10 +697,14 @@ MainWindow::MessageReceived(BMessage* message)
 			}
 			if (hit >= 0 && usb != NULL) {
 				// The sweep thread left the tuner on the layout that worked.
+				// Only this one gets written to disk - the candidates it tried
+				// on the way here were never saved.
+				bool saved = usb->SaveSettings() == B_OK;
 				BString log;
-				log.SetToFormat("0x%02x/0x%02x ラッチ0x%02x で受信 - "
-					"設定に適用しました", usb->FrequencyRegister(),
-					usb->FrequencyRegisterLow(), usb->LatchValue());
+				log.SetToFormat("0x%02x/0x%02x ラッチ0x%02x で受信 - %s",
+					usb->FrequencyRegister(), usb->FrequencyRegisterLow(),
+					usb->LatchValue(), saved ? "設定に保存しました"
+						: "設定に適用しました (保存は失敗)");
 				SetStatusText(std::string(log.String()));
 				PostMessage(kMsgTune);
 			} else {
