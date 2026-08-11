@@ -8,6 +8,7 @@
 #include <MenuBar.h>
 #include <MenuItem.h>
 #include <OS.h>
+#include <RadioButton.h>
 #include <String.h>
 #include <TextControl.h>
 
@@ -32,6 +33,9 @@ static const uint32 kMsgStop = 'Stop';
 static const uint32 kMsgScan = 'Scan';
 static const uint32 kMsgScanHit = 'Shit';
 static const uint32 kMsgScanDone = 'Sdon';
+static const uint32 kMsgSweep = 'Swep';
+static const uint32 kMsgSweepHit = 'SwHt';
+static const uint32 kMsgSweepDone = 'SwDn';
 static const uint32 kMsgSettings = 'Setg';
 static const uint32 kMsgApplySettings = 'AplS';
 static const uint32 kMsgQuit = 'Quit';
@@ -52,12 +56,20 @@ MainWindow::MainWindow(const std::string& capturePath)
 	fStatusView(NULL),
 	fSettingsPanel(NULL),
 	fSettingsField(NULL),
+	fSettingsLowField(NULL),
+	fSettingsLatchField(NULL),
+	fPresetDefault(NULL),
+	fPresetAlternate(NULL),
 	fPlayer(NULL),
 	fTuner(NULL),
 	fScanThread(-1),
 	fScanCancel(false),
 	fQuitPending(false),
-	fScanFirstHit(-1)
+	fScanFirstHit(-1),
+	fSweepChannel(-1),
+	fSweepSavedHigh(0),
+	fSweepSavedLow(0),
+	fSweepSavedLatch(0)
 {
 	BuildLayout();
 
@@ -149,6 +161,10 @@ MainWindow::BuildMenu()
 	fMenuBar = new BMenuBar("menubar");
 	BMenu* file = new BMenu("ファイル");
 	file->AddItem(new BMenuItem("スキャン", new BMessage(kMsgScan), 'S'));
+	// The sweep is the answer to "which registers?" - it tries every candidate
+	// layout against the selected channel and keeps the one that receives.
+	file->AddItem(new BMenuItem("周波数レジスタ候補スイープ",
+		new BMessage(kMsgSweep)));
 	file->AddItem(new BMenuItem("設定" B_UTF8_ELLIPSIS,
 		new BMessage(kMsgSettings)));
 	file->AddSeparatorItem();
@@ -273,6 +289,118 @@ MainWindow::ScanEntry(void* self)
 
 
 void
+MainWindow::StartSweep()
+{
+	if (fScanThread >= 0)
+		return;					// a scan or a sweep is already running
+
+	fPlayer->Stop();
+
+	UsbTuner* usb = dynamic_cast<UsbTuner*>(fTuner);
+	if (usb == NULL) {
+		SetStatusText("スイープはUSBチューナー使用時のみ");
+		return;
+	}
+
+	int32 selected = fChannelList->CurrentSelection();
+	if (selected < 0) {
+		SetStatusText("放送のあるチャンネルを選んでからスイープしてください");
+		return;
+	}
+
+	status_t status = fTuner->Open();
+	if (status != B_OK) {
+		std::string detail = fTuner->LastError();
+		SetStatusText(detail.empty() ? "could not open the tuner" : detail);
+		return;
+	}
+
+	// Remember the layout in use: a sweep that finds nothing must leave the
+	// tuner exactly as it was, not on whatever candidate happened to be last.
+	fSweepSavedHigh = usb->FrequencyRegister();
+	fSweepSavedLow = usb->FrequencyRegisterLow();
+	fSweepSavedLatch = usb->LatchValue();
+
+	fSweepChannel = selected;
+	fScanCancel = false;
+	SetStatusText("候補スイープ中 - " + fChannels[selected].Label());
+	fScanThread = spawn_thread(SweepEntry, "roneseg sweep", B_LOW_PRIORITY,
+		this);
+	if (fScanThread < 0) {
+		fScanThread = -1;
+		SetStatusText("could not start the sweep");
+		return;
+	}
+	resume_thread(fScanThread);
+
+	if (fScanButton != NULL) {
+		fScanButton->SetEnabled(false);
+		fScanButton->SetLabel("スイープ中...");
+	}
+}
+
+
+status_t
+MainWindow::SweepEntry(void* self)
+{
+	MainWindow* window = (MainWindow*)self;
+	UsbTuner* usb = dynamic_cast<UsbTuner*>(window->fTuner);
+	if (usb == NULL)
+		return B_ERROR;
+
+	uint64 frequency = window->fChannels[window->fSweepChannel].frequencyHz;
+	size_t count = 0;
+	const UsbTuner::TuningCandidate* candidates
+		= UsbTuner::TuningCandidates(&count);
+
+	BMessenger messenger(window);
+	int32 hit = -1;
+	for (size_t i = 0; i < count; i++) {
+		if (window->fScanCancel)
+			break;
+
+		usb->SetFrequencyRegisters(candidates[i].high, candidates[i].low);
+		usb->SetLatchValue(candidates[i].latch);
+
+		bool signal = usb->HasSignal(frequency);
+		UsbTuner::Diagnostic diag = usb->LastDiagnostic();
+
+		BMessage note(kMsgSweepHit);
+		note.AddInt32("index", (int32)i);
+		note.AddInt32("count", (int32)count);
+		note.AddInt32("high", candidates[i].high);
+		note.AddInt32("low", candidates[i].low);
+		note.AddInt32("latch", candidates[i].latch);
+		note.AddBool("signal", signal);
+		note.AddBool("sync", diag.sync);
+		note.AddInt64("bytes", (int64)diag.bytes);
+		messenger.SendMessage(&note);
+
+		if (signal) {
+			hit = (int32)i;
+			break;				// the tuner is already set to this layout
+		}
+	}
+
+	BMessage done(kMsgSweepDone);
+	done.AddInt32("hit", hit);
+	messenger.SendMessage(&done);
+	return B_OK;
+}
+
+
+void
+MainWindow::FinishScanUi()
+{
+	fScanThread = -1;
+	if (fScanButton != NULL) {
+		fScanButton->SetEnabled(true);
+		fScanButton->SetLabel("チャンネルスキャン");
+	}
+}
+
+
+void
 MainWindow::ShowUsbReport()
 {
 	std::string report = UsbTuner::ScanReport();
@@ -291,28 +419,66 @@ MainWindow::ShowSettings()
 		return;
 	}
 
-	// A tiny modal panel with one field: the demodulator register the frequency
-	// word is written to. The default 0x32 came from static analysis and could
-	// not be confirmed against a live signal, so it is adjustable here rather
-	// than by recompiling - the one knob that might need turning in Japan.
-	char current[8];
-	snprintf(current, sizeof(current), "%02x", usb->FrequencyRegister());
+	// A tiny modal panel for the one thing static analysis could not settle:
+	// where the frequency word lands. Three fields, because the two candidate
+	// readings of the Windows stack disagree on more than a base address -
+	// 0x32/0x33 with latch 0x01, or 0x64/0x67 (not adjacent) with latch 0x10.
+	// Both are reachable from here without recompiling, which is the whole
+	// point: the answer gets decided by a demodulator in front of a real
+	// transmitter, not by more disassembly.
+	char high[8], low[8], latch[8];
+	snprintf(high, sizeof(high), "%02x", usb->FrequencyRegister());
+	snprintf(low, sizeof(low), "%02x", usb->FrequencyRegisterLow());
+	snprintf(latch, sizeof(latch), "%02x", usb->LatchValue());
 
 	BWindow* panel = new BWindow(
-		BRect(0, 0, 320, 110), "設定", B_MODAL_WINDOW,
+		BRect(0, 0, 320, 190), "設定", B_MODAL_WINDOW,
 		B_NOT_RESIZABLE | B_NOT_ZOOMABLE | B_AUTO_UPDATE_SIZE_LIMITS);
 	panel->CenterIn(Frame());
 
-	BTextControl* field = new BTextControl("freqreg",
-		"周波数レジスタ (16進):", current, NULL);
+	BRadioButton* presetDefault = new BRadioButton("preset-default",
+		"既定  32 / 33  ラッチ 01", NULL);
+	BRadioButton* presetAlternate = new BRadioButton("preset-alt",
+		"代替  64 / 67  ラッチ 10", NULL);
+	BRadioButton* presetCustom = new BRadioButton("preset-custom",
+		"手動指定 (16進):", NULL);
+
+	BTextControl* field = new BTextControl("freqreg", "上位:", high, NULL);
+	BTextControl* lowField = new BTextControl("freqreglow", "下位:", low, NULL);
+	BTextControl* latchField = new BTextControl("latch", "ラッチ 0x42:", latch,
+		NULL);
+
+	// Whichever of the three the tuner is currently on starts selected, so the
+	// panel always opens showing the truth rather than a default.
+	if (usb->FrequencyRegister() == 0x32 && usb->FrequencyRegisterLow() == 0x33
+		&& usb->LatchValue() == 0x01) {
+		presetDefault->SetValue(B_CONTROL_ON);
+	} else if (usb->FrequencyRegister() == 0x64
+		&& usb->FrequencyRegisterLow() == 0x67 && usb->LatchValue() == 0x10) {
+		presetAlternate->SetValue(B_CONTROL_ON);
+	} else {
+		presetCustom->SetValue(B_CONTROL_ON);
+	}
+
+	BStringView* hint = new BStringView("hint",
+		"どれが正しいかは電波の前でしか決まりません - ファイルメニューの"
+		"候補スイープが選択チャンネルで総当たりします。");
 
 	BButton* ok = new BButton("ok", "OK", new BMessage(kMsgApplySettings));
 	BButton* cancel = new BButton("cancel", "キャンセル",
 		new BMessage(B_QUIT_REQUESTED));
 
-	BLayoutBuilder::Group<>(panel, B_VERTICAL, B_USE_DEFAULT_SPACING)
+	BLayoutBuilder::Group<>(panel, B_VERTICAL, B_USE_SMALL_SPACING)
 		.SetInsets(B_USE_WINDOW_INSETS)
-		.Add(field)
+		.Add(presetDefault)
+		.Add(presetAlternate)
+		.Add(presetCustom)
+		.AddGroup(B_HORIZONTAL, B_USE_SMALL_SPACING)
+			.Add(field)
+			.Add(lowField)
+			.Add(latchField)
+		.End()
+		.Add(hint)
 		.AddGroup(B_HORIZONTAL, B_USE_SMALL_SPACING)
 			.AddGlue()
 			.Add(cancel)
@@ -324,17 +490,34 @@ MainWindow::ShowSettings()
 	// back here. Wire OK and the field to send to the main window.
 	ok->SetTarget(this);
 	field->SetTarget(this);
-	// Stash the field's text on the apply message by making Enter in the field
-	// also apply.
-	field->SetModificationMessage(NULL);
+	lowField->SetTarget(this);
+	latchField->SetTarget(this);
 
-	// Remember the panel and field so ApplySettings can read and close them.
+	// Remember the panel and controls so ApplySettings can read and close them.
 	fSettingsPanel = panel;
 	fSettingsField = field;
+	fSettingsLowField = lowField;
+	fSettingsLatchField = latchField;
+	fPresetDefault = presetDefault;
+	fPresetAlternate = presetAlternate;
 	cancel->SetTarget(panel);
 
 	panel->Show();
 	field->MakeFocus(true);
+}
+
+
+uint8
+MainWindow::HexByte(BTextControl* field, uint8 fallback)
+{
+	const char* text = field->Text();
+	if (text == NULL || text[0] == '\0')
+		return fallback;
+	char* end = NULL;
+	long value = strtol(text, &end, 16);
+	if (end == text || value < 0 || value > 0xFF)
+		return fallback;
+	return (uint8)value;
 }
 
 
@@ -343,24 +526,42 @@ MainWindow::ApplySettings(BMessage* message)
 {
 	(void)message;
 	UsbTuner* usb = dynamic_cast<UsbTuner*>(fTuner);
-	if (usb != NULL && fSettingsField != NULL) {
-		const char* text = fSettingsField->Text();
-		if (text != NULL && text[0] != '\0') {
-			long reg = strtol(text, NULL, 16);
-			if (reg >= 0 && reg <= 0xFE) {
-				usb->SetFrequencyRegister((uint8)reg);
-				char status[96];
-				snprintf(status, sizeof(status),
-					"周波数レジスタを 0x%02lx に設定 - 再スキャンしてください",
-					reg);
-				SetStatusText(status);
-			}
+	if (usb != NULL && fSettingsField != NULL && fSettingsLowField != NULL
+		&& fSettingsLatchField != NULL) {
+		// The two presets are the two readings of the vendor code; the manual
+		// fields are for anything a sweep turns up that neither predicted. An
+		// empty or unparseable field keeps what the tuner already has, so a
+		// half-filled panel cannot silently zero a register.
+		uint8 high, low, latch;
+		if (fPresetDefault != NULL
+			&& fPresetDefault->Value() == B_CONTROL_ON) {
+			high = 0x32; low = 0x33; latch = 0x01;
+		} else if (fPresetAlternate != NULL
+			&& fPresetAlternate->Value() == B_CONTROL_ON) {
+			high = 0x64; low = 0x67; latch = 0x10;
+		} else {
+			high = HexByte(fSettingsField, usb->FrequencyRegister());
+			low = HexByte(fSettingsLowField, usb->FrequencyRegisterLow());
+			latch = HexByte(fSettingsLatchField, usb->LatchValue());
 		}
+
+		usb->SetFrequencyRegisters(high, low);
+		usb->SetLatchValue(latch);
+
+		char status[128];
+		snprintf(status, sizeof(status),
+			"周波数レジスタ 0x%02x/0x%02x, ラッチ 0x%02x - 再スキャンしてください",
+			high, low, latch);
+		SetStatusText(status);
 	}
 	if (fSettingsPanel != NULL) {
 		fSettingsPanel->PostMessage(B_QUIT_REQUESTED);
 		fSettingsPanel = NULL;
 		fSettingsField = NULL;
+		fSettingsLowField = NULL;
+		fSettingsLatchField = NULL;
+		fPresetDefault = NULL;
+		fPresetAlternate = NULL;
 	}
 }
 
@@ -384,6 +585,10 @@ MainWindow::MessageReceived(BMessage* message)
 
 		case kMsgScan:
 			StartScan();
+			break;
+
+		case kMsgSweep:
+			StartSweep();
 			break;
 
 		case kMsgSettings:
@@ -445,13 +650,71 @@ MainWindow::MessageReceived(BMessage* message)
 			break;
 		}
 
+		case kMsgSweepHit:
+		{
+			int32 index = 0, count = 0, high = 0, low = 0, latch = 0;
+			bool signal = false, sync = false;
+			int64 bytes = 0;
+			message->FindInt32("index", &index);
+			message->FindInt32("count", &count);
+			message->FindInt32("high", &high);
+			message->FindInt32("low", &low);
+			message->FindInt32("latch", &latch);
+			message->FindBool("signal", &signal);
+			message->FindBool("sync", &sync);
+			message->FindInt64("bytes", &bytes);
+
+			BString log;
+			log.SetToFormat("候補 %" B_PRId32 "/%" B_PRId32
+				"  0x%02" B_PRIx32 "/0x%02" B_PRIx32 " ラッチ0x%02" B_PRIx32
+				": ", index + 1, count, high, low, latch);
+			if (bytes <= 0)
+				log << "データなし";
+			else if (!sync)
+				log << bytes << " バイト, TS同期なし";
+			else
+				log << bytes << " バイト, TS同期 - 受信";
+			SetStatusText(std::string(log.String()));
+			break;
+		}
+
+		case kMsgSweepDone:
+		{
+			int32 hit = -1;
+			message->FindInt32("hit", &hit);
+			FinishScanUi();
+
+			UsbTuner* usb = dynamic_cast<UsbTuner*>(fTuner);
+			if (fQuitPending) {
+				PostMessage(B_QUIT_REQUESTED);
+				break;
+			}
+			if (hit >= 0 && usb != NULL) {
+				// The sweep thread left the tuner on the layout that worked.
+				BString log;
+				log.SetToFormat("0x%02x/0x%02x ラッチ0x%02x で受信 - "
+					"設定に適用しました", usb->FrequencyRegister(),
+					usb->FrequencyRegisterLow(), usb->LatchValue());
+				SetStatusText(std::string(log.String()));
+				PostMessage(kMsgTune);
+			} else {
+				// Nothing received: put back what was in use, so a failed
+				// sweep leaves no trace on the tuner.
+				if (usb != NULL) {
+					usb->SetFrequencyRegisters(fSweepSavedHigh, fSweepSavedLow);
+					usb->SetLatchValue(fSweepSavedLatch);
+				}
+				SetStatusText(fScanCancel
+					? "スイープ中止 - 設定は元のままです"
+					: "どの候補でも受信できませんでした - アンテナと"
+						"チャンネル選択を確認してください");
+			}
+			break;
+		}
+
 		case kMsgScanDone:
 		{
-			fScanThread = -1;
-			if (fScanButton != NULL) {
-				fScanButton->SetEnabled(true);
-				fScanButton->SetLabel("チャンネルスキャン");
-			}
+			FinishScanUi();
 			// If a quit was deferred until the scan stopped, do it now.
 			if (fQuitPending) {
 				PostMessage(B_QUIT_REQUESTED);

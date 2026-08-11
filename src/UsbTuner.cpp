@@ -80,6 +80,23 @@ const uint8 kTuner60[][2] = {
 };
 
 
+// Where the frequency word might land, best-supported first. The first two are
+// the two readings of DtvCore.dll (see AGENTS.md §6.4); the rest are their near
+// neighbours - the registers the demodulator init table deliberately leaves at
+// zero, paired both ways, with each latch value that appears in the vendor
+// code. Short on purpose: this runs against one channel at a time, and a list
+// long enough to be "thorough" would be too slow to sit through.
+const UsbTuner::TuningCandidate kTuningCandidates[] = {
+	{ 0x32, 0x33, 0x01 },		// the default
+	{ 0x64, 0x67, 0x10 },		// DtvCore.dll 0x100905f7, latch 0x42 = 0x10
+	{ 0x64, 0x67, 0x01 },
+	{ 0x32, 0x33, 0x10 },
+	{ 0x64, 0x65, 0x01 },
+	{ 0x66, 0x67, 0x01 },
+	{ 0x34, 0x35, 0x01 },
+};
+
+
 std::string
 Hex16(uint16 value)
 {
@@ -224,7 +241,9 @@ UsbTuner::UsbTuner()
 	fProfile(NULL),
 	fReady(false),
 	fFrequency(0),
-	fFrequencyReg(0x32)
+	fFrequencyReg(0x32),
+	fFrequencyRegLow(0x33),
+	fLatchValue(0x01)
 {
 }
 
@@ -245,6 +264,15 @@ UsbTuner::ProfileFor(uint16 vendor, uint16 product)
 		}
 	}
 	return NULL;
+}
+
+
+const UsbTuner::TuningCandidate*
+UsbTuner::TuningCandidates(size_t* count)
+{
+	if (count != NULL)
+		*count = sizeof(kTuningCandidates) / sizeof(kTuningCandidates[0]);
+	return kTuningCandidates;
 }
 
 
@@ -494,21 +522,24 @@ UsbTuner::UploadFirmware()
 		return B_IO_ERROR;
 	}
 
-	BUSBDevice* device;
 	{
 		BAutolock lock(&fDeviceLock);
-		device = fDevice;
-	}
-	if (device == NULL) {
-		fclose(file);
-		return B_DEVICE_NOT_FOUND;
+		if (fDevice == NULL) {
+			fclose(file);
+			return B_DEVICE_NOT_FOUND;
+		}
 	}
 
 	// Halt the 8051, write every record, then release it. The device renumerates
-	// on release, so `device` is invalid afterwards - do not touch it again.
+	// on release, so nothing may touch it again afterwards.
+	//
+	// Every one of these goes through ControlTimed like the rest of the project:
+	// this is the first thing a fresh module is asked to do, and a bootloader
+	// that does not answer would otherwise park an unkillable driver thread
+	// here - on the one path a user cannot avoid.
 	uint8 reset = 0x01;
-	device->ControlTransfer(kVendorOut, kFirmwareLoad, kCpuCsRegister, 0, 1,
-		&reset);
+	ControlTimed(kVendorOut, kFirmwareLoad, kCpuCsRegister, 0, 1, &reset,
+		1000000);
 
 	uint8 buffer[64];
 	while (true) {
@@ -521,12 +552,12 @@ UsbTuner::UploadFirmware()
 			break;
 		if (fread(buffer, 1, length, file) != length)
 			break;
-		if (device->ControlTransfer(kVendorOut, kFirmwareLoad, address, 0,
-				length, buffer) != (ssize_t)length) {
+		if (ControlTimed(kVendorOut, kFirmwareLoad, address, 0, length, buffer,
+				1000000) != (ssize_t)length) {
 			// Leave the CPU running rather than halted, then report.
 			uint8 run = 0x00;
-			device->ControlTransfer(kVendorOut, kFirmwareLoad, kCpuCsRegister,
-				0, 1, &run);
+			ControlTimed(kVendorOut, kFirmwareLoad, kCpuCsRegister, 0, 1, &run,
+				1000000);
 			fclose(file);
 			SetLastError("firmware upload failed mid-way");
 			return B_IO_ERROR;
@@ -535,8 +566,7 @@ UsbTuner::UploadFirmware()
 	fclose(file);
 
 	uint8 run = 0x00;
-	device->ControlTransfer(kVendorOut, kFirmwareLoad, kCpuCsRegister, 0, 1,
-		&run);
+	ControlTimed(kVendorOut, kFirmwareLoad, kCpuCsRegister, 0, 1, &run, 1000000);
 
 	// The bootloader identity is going away; drop our reference so FindDevice
 	// waits for the firmware identity rather than returning the old one.
@@ -745,15 +775,17 @@ UsbTuner::Tune(uint64 frequencyHz)
 	double mhz = (double)frequencyHz / 1000000.0;
 	int v = (int)lround(7.0 * mhz);
 
-	// Frequency word, then the 0x42 latch pulse the init uses. The register is
-	// configurable (default 0x32/0x33); if a signal is present and nothing
-	// locks, it is the first thing to adjust.
+	// Frequency word, then the 0x42 latch pulse. Both registers and the latch
+	// value are configurable (default 0x32/0x33, latch 0x01); if a signal is
+	// present and nothing locks, this is the first thing to adjust - the other
+	// candidate read out of DtvCore.dll is 0x64/0x67 with latch 0x10, which is
+	// why the low register is not assumed to be the high one plus one.
 	if (!WriteRegister(kDemod, fFrequencyReg, (uint8)(v >> 8))
-		|| !WriteRegister(kDemod, (uint8)(fFrequencyReg + 1), (uint8)(v & 0xFF))) {
+		|| !WriteRegister(kDemod, fFrequencyRegLow, (uint8)(v & 0xFF))) {
 		SetLastError("could not write the frequency");
 		return B_IO_ERROR;
 	}
-	WriteRegister(kDemod, 0x42, 0x01);
+	WriteRegister(kDemod, 0x42, fLatchValue);
 	WriteRegister(kDemod, 0x42, 0x00);
 
 	// Restart the FIFOs so the stream begins cleanly on the new channel.
@@ -812,7 +844,7 @@ UsbTuner::HasSignal(uint64 frequencyHz, bigtime_t timeout)
 	if (Tune(frequencyHz) != B_OK)
 		return false;
 	fDiagnostic.tuned = true;
-	snooze(200000);					// let the demod acquire and the FIFO fill
+	snooze(500000);					// let the demod acquire and the FIFO fill
 
 	const size_t kSize = 16384;
 	uint8* buffer = (uint8*)malloc(kSize);

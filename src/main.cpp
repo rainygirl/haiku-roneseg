@@ -35,8 +35,7 @@ PrintUsage(const char* binary)
 		"Usage: %s [--play FILE.ts] [--list-usb]\n"
 		"\n"
 		"  --play FILE.ts   Replay a captured transport stream instead of\n"
-		"                   using the tuner. This is the only mode that\n"
-		"                   works today - see README.md.\n"
+		"                   using the tuner - the no-hardware path.\n"
 		"  --list-usb       Print every USB device that could plausibly be a\n"
 		"                   tuner, with its descriptors, and exit. Run this\n"
 		"                   first on a machine whose tuner is unidentified.\n",

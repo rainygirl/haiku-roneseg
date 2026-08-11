@@ -40,7 +40,9 @@ if [ -f recovery/oneseg_fw.rec ]; then
 fi
 
 # Applications: the user apps folder, and a Desktop launcher beside it.
-APPS="$HOME/config/apps"
+# ~/config/apps is packagefs and read-only - a write there fails with
+# "Read-only file system" - so user-built applications go to non-packaged.
+APPS="$HOME/config/non-packaged/apps"
 mkdir -p "$APPS"
 cp "$BINARY" "$APPS/ROneSeg"
 mimeset -f "$APPS/ROneSeg"
@@ -49,7 +51,7 @@ ln -sf "$APPS/ROneSeg" "$HOME/Desktop/ROneSeg"
 echo "==> installed to $APPS/ROneSeg and linked on the Desktop"
 echo
 echo "Usage:"
-echo "  double-click ROneSeg (Desktop or ~/config/apps)"
+echo "  double-click ROneSeg (Desktop or ~/config/non-packaged/apps)"
 echo "  then press Alt-S to scan - it walks the UHF channels, marks the ones"
 echo "  a stream comes out of, and plays the first. Arrow keys + Enter retune."
 echo "  Alt-U shows the USB report; --play capture.ts replays a file."

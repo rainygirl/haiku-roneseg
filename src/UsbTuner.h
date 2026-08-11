@@ -81,7 +81,13 @@ public:
 	// say whether a transport stream is coming out of it. This is the signal
 	// test the scanner uses - it does not depend on knowing which demodulator
 	// register is the lock bit, only on whether TS packets actually arrive.
-	bool HasSignal(uint64 frequencyHz, bigtime_t timeout = 500000);
+	//
+	// The default is deliberately generous: an ISDB-T demodulator can take
+	// around a second to acquire on a weak signal, and a scan that gives up
+	// before that reports a real channel as "no data" - which is the failure
+	// that looks exactly like a wrong frequency register. 50 channels at worst
+	// case is about two minutes, and the scan is cancellable between channels.
+	bool HasSignal(uint64 frequencyHz, bigtime_t timeout = 1500000);
 
 	// What the last HasSignal()/Read attempt saw, for the diagnostic log: how
 	// many bytes came off the data endpoint and whether they framed as TS.
@@ -93,12 +99,40 @@ public:
 	};
 	Diagnostic LastDiagnostic() const { return fDiagnostic; }
 
-	// Which demodulator register the frequency word is written to. The value
-	// recovered from static analysis is 0x32/0x33, but it could not be
-	// confirmed against a live signal, so it is adjustable. reg and reg+1 take
-	// the high and low bytes of V = 7 x f_MHz.
-	void SetFrequencyRegister(uint8 reg) { fFrequencyReg = reg; }
+	// Where the frequency word goes: two demodulator registers taking the high
+	// and low bytes of V = 7 x f_MHz, and the value pulsed into the 0x42 latch
+	// around them.
+	//
+	// None of the three could be confirmed against a live signal, and the two
+	// readings of DtvCore.dll disagree, so all three are adjustable rather than
+	// compiled in. The two candidates worth trying in the field:
+	//
+	//   0x32 / 0x33, latch 0x01   the default - the demodulator init table
+	//                             leaves 0x32-0x35 at zero, and the tuning
+	//                             orchestrator writes there
+	//   0x64 / 0x67, latch 0x10   what the caller-side disassembly at
+	//                             DtvCore.dll 0x100905f7 spells out, with the
+	//                             registers NOT adjacent (see
+	//                             recovery/docs/tuning-progress.md)
+	//
+	// The second cannot be expressed by a single base register, which is why
+	// the low register is set separately rather than being high + 1.
+	void SetFrequencyRegisters(uint8 high, uint8 low)
+		{ fFrequencyReg = high; fFrequencyRegLow = low; }
+	void SetLatchValue(uint8 value) { fLatchValue = value; }
 	uint8 FrequencyRegister() const { return fFrequencyReg; }
+	uint8 FrequencyRegisterLow() const { return fFrequencyRegLow; }
+	uint8 LatchValue() const { return fLatchValue; }
+
+	// One layout the frequency word might use. The sweep walks these against a
+	// channel known to be on air and keeps whichever one produces a transport
+	// stream - which is the only way this question gets answered.
+	struct TuningCandidate {
+		uint8		high;
+		uint8		low;
+		uint8		latch;
+	};
+	static const TuningCandidate* TuningCandidates(size_t* count);
 
 	// Enumerates every USB device on the machine and describes the ones that
 	// could plausibly be a tuner. Safe to call without Open(); this is the
@@ -142,7 +176,9 @@ private:
 	std::string				fFirmwarePath;
 	bool					fReady;
 	uint64					fFrequency;
-	uint8					fFrequencyReg;
+	uint8					fFrequencyReg;		// high byte of V
+	uint8					fFrequencyRegLow;	// low byte of V
+	uint8					fLatchValue;		// pulsed into demod 0x42
 	Diagnostic				fDiagnostic;
 };
 
