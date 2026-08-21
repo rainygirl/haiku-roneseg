@@ -32,16 +32,19 @@ RF 프론트엔드가 Band III에 닿지 않고, 복조기는 ISDB-T OFDM을 실
 
 모듈은 전원을 넣은 시점에 펌웨어가 없습니다. `oneseg_fw.rec`가 없으면 USB에는
 보이지만 스트리밍 엔드포인트가 나오지 않아 **스캔이 한 채널도 찾지 못합니다**.
-이미지는 소니 것이라 동봉하지 않으며, 보유하신 기기의 드라이버에서 직접
-생성합니다:
+이미지는 소니 것이라 동봉하지 않으며, 보유하신 기기의 드라이버에서 생성합니다.
+
+할 일은 **Windows 드라이버 `vscd.sys`를 이 스크립트 옆이나 데스크톱에 두고
+`./install.sh`를 실행하는 것**뿐입니다. 추출·검증·설치를 자동으로 하고 결과를
+한 줄로 보고합니다:
 
 ```
-python3 recovery/extract_fw.py vscd.sys ~/config/settings/roneseg/oneseg_fw.rec
+==> firmware: 666 records, 8597 bytes, loading to 0x0000-0x2207, reset vector LJMP 0x1aae
 ```
 
-절차와, 추출이 안 될 때의 대처는 **[FIRMWARE.md](FIRMWARE.md)**에 정리해
-두었습니다. 이미지가 제자리에 있는지는 `ROneSeg --list-usb`의 `Firmware:` 줄로
-확인할 수 있습니다.
+드라이버 입수 경로, 다른 위치 지정(`--driver`), 추출이 안 될 때의 대처는
+**[FIRMWARE.md](FIRMWARE.md)**에 정리해 두었습니다. 설치 상태는
+`ROneSeg --list-usb`의 `Firmware:` 줄로도 확인할 수 있습니다.
 
 ## 빌드
 

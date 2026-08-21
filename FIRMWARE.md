@@ -20,25 +20,49 @@
 このリポジトリはイメージを同梱していません (ソニーのものです)。**お手元の実機の
 ドライバから、ご自分で生成する**のが前提です。
 
-## 取り出し方
+## 取り出し方 — `install.sh` に任せる
 
 イメージは Windows 用ドライバ `vscd.sys` の `.data` セクションに、固定 22 バイト
-のレコード表として埋め込まれています。
+のレコード表として埋め込まれています。**手で取り出す必要はありません。**
+`vscd.sys` をこのスクリプトの隣 (またはデスクトップ) に置いて:
+
+```
+./install.sh
+```
+
+抽出・検証・設置まで済ませて、こう表示します:
+
+```
+==> extracting firmware from ./vscd.sys
+==> firmware: 666 records, 8597 bytes, loading to 0x0000-0x2207, reset vector LJMP 0x1aae
+```
+
+ドライバが別の場所にあるなら:
+
+```
+./install.sh --driver /path/to/vscd.sys
+```
+
+探す場所は、スクリプトのあるディレクトリ、ホーム、`~/Desktop`、`~/Downloads`、
+`~/driver`、`~/drivers` の各 3 階層までです。ファイル名は `VSCD.SYS` でも
+かまいません。
+
+以降の実行では、すでに置かれているイメージを毎回検証して同じ 1 行を出します。
+イメージが壊れていれば設置せずに理由を表示します。
+
+手で実行する場合 (`install.sh` がドライバを見つけられないときなど):
 
 ```
 python3 recovery/extract_fw.py vscd.sys ~/config/settings/roneseg/oneseg_fw.rec
+python3 recovery/extract_fw.py --check ~/config/settings/roneseg/oneseg_fw.rec
 ```
 
-VGN-P70H のドライバで期待される出力:
-
-```
-666 records, 8597 bytes, loading to 0x0000-0x2207
-reset vector: LJMP 0x1aae
-wrote .../oneseg_fw.rec (11265 bytes)
-```
-
-リセットベクタが `LJMP` (先頭バイト `0x02`) であることが、解析が正しいことの
-最も安価な確認です。
+VGN-P70H のドライバなら `666 records, 8597 bytes` と
+`reset vector LJMP 0x1aae` になります。リセットベクタが `LJMP` (先頭バイト
+`0x02`) であることが、解析が正しいことの最も安価な確認です。抽出器は、
+リセットベクタが無い場合や `0x43` (INT2/USB) のベクタを欠く場合は
+**書き出しを拒否します** — そのイメージは「ファームウェアは走るのに EP0 に
+一切応答しないモジュール」を作るからです。
 
 `vscd.sys` の入手元:
 

@@ -36,6 +36,11 @@ endpoint 0, leaving a device that answers nothing until it is power-cycled.
 Usage:
   python3 recovery/extract_fw.py vscd.sys recovery/oneseg_fw.rec
   python3 recovery/extract_fw.py vscd.sys --image oneseg_fw.bin   # flat image
+  python3 recovery/extract_fw.py --check oneseg_fw.rec            # validate
+
+`install.sh` runs both of these for you: it finds a vscd.sys, extracts, checks
+the result and installs it. Reach for this directly when that cannot find the
+driver, or to inspect an image by hand.
 """
 
 import struct
@@ -149,7 +154,87 @@ def records(data, verbose=True):
     return []
 
 
+def assemble(found):
+    """The records flattened into an address -> byte map."""
+    image = {}
+    for address, payload in found:
+        for i, value in enumerate(payload):
+            image[address + i] = value
+    return image
+
+
+def complaints(found, image):
+    """Everything wrong with this image, as a list of one-line reasons.
+
+    Empty means it is safe to upload. These are refusals rather than warnings
+    when writing a .rec, because an image missing its vector table produces a
+    module that runs the firmware and then answers nothing at all until it is
+    power-cycled - the exact failure that is hardest to recognise from the
+    outside.
+    """
+    problems = []
+    if len(found) < MIN_RECORDS:
+        problems.append('only %d records - a firmware table is hundreds long'
+            % len(found))
+    if image.get(0) != 0x02:
+        problems.append('byte 0 is 0x%02x, not LJMP (0x02) - the parse is wrong'
+            % image.get(0, 0xFF))
+    if image.get(0x43) is None:
+        problems.append('interrupt vector 0x43 (INT2/USB) is missing - the '
+            'firmware would not service endpoint 0')
+    return problems
+
+
+def describe(found, image):
+    total = sum(len(payload) for _, payload in found)
+    low = min(address for address, _ in found)
+    high = max(address + len(payload) for address, payload in found) - 1
+    line = '%d records, %d bytes, loading to 0x%04x-0x%04x' \
+        % (len(found), total, low, high)
+    if image.get(0) == 0x02:
+        line += ', reset vector LJMP 0x%04x' \
+            % ((image.get(1, 0) << 8) | image.get(2, 0))
+    return line, low, high
+
+
+def read_records(path):
+    """Parse a .rec file back into records - the inverse of what is written."""
+    data = open(path, 'rb').read()
+    found = []
+    position = 0
+    while position + 4 <= len(data):
+        address, length = struct.unpack('<HH', data[position:position + 4])
+        position += 4
+        if length == 0:
+            break
+        if length > MAX_RECORD or position + length > len(data):
+            raise SystemExit('%s: malformed record at offset %d'
+                % (path, position - 4))
+        found.append((address, data[position:position + length]))
+        position += length
+    if not found:
+        raise SystemExit('%s: no records - the file is empty or truncated'
+            % path)
+    return found
+
+
+def check(path):
+    """Validate an already-extracted .rec, the way install.sh does."""
+    found = read_records(path)
+    image = assemble(found)
+    line, _, _ = describe(found, image)
+    problems = complaints(found, image)
+    if problems:
+        raise SystemExit('%s is not usable:\n  %s\n%s'
+            % (path, '\n  '.join(problems), line))
+    print(line)
+
+
 def main():
+    if len(sys.argv) >= 3 and sys.argv[1] == '--check':
+        check(sys.argv[2])
+        return
+
     if len(sys.argv) < 3:
         raise SystemExit(__doc__)
 
@@ -173,30 +258,15 @@ def main():
             'the build differs from the one this was recovered from. See\n'
             'FIRMWARE.md for what to do next.' % (sys.argv[1], TABLE_OFFSET))
 
-    total = sum(len(payload) for _, payload in found)
-    low = min(address for address, _ in found)
-    high = max(address + len(payload) for address, payload in found) - 1
-    print('%d records, %d bytes, loading to 0x%04x-0x%04x'
-        % (len(found), total, low, high))
-
-    # The reset vector is the cheapest sanity check there is: a valid 8051
-    # image starts with LJMP (0x02), and a mis-parsed one almost never does.
-    image = {}
-    for address, payload in found:
-        for i, value in enumerate(payload):
-            image[address + i] = value
-    if image.get(0) != 0x02:
-        print('warning: byte 0 is 0x%02x, not LJMP - the parse looks wrong'
-            % image.get(0, 0xFF))
-    else:
-        target = (image.get(1, 0) << 8) | image.get(2, 0)
-        print('reset vector: LJMP 0x%04x' % target)
-    for vector, name in ((0x43, 'INT2/USB'), (0x53, 'INT4')):
-        if image.get(vector) is None:
-            print('warning: interrupt vector 0x%02x is missing - firmware '
-                'built from this will not service USB' % vector)
+    image = assemble(found)
+    line, low, high = describe(found, image)
+    print(line)
 
     if sys.argv[2] == '--image':
+        # The flat dump is an analysis aid, so a suspect parse is reported and
+        # still written - looking at it is how you work out what went wrong.
+        for problem in complaints(found, image):
+            print('warning: %s' % problem)
         flat = bytearray(0xFF for _ in range(high - low + 1))
         for address, value in image.items():
             flat[address - low] = value
@@ -205,6 +275,13 @@ def main():
         print('wrote %s (base 0x%04x, %d bytes, gaps 0xff)'
             % (path, low, len(flat)))
         return
+
+    # This one is going to be uploaded to hardware, so it is refused rather
+    # than written with a warning nobody reads.
+    problems = complaints(found, image)
+    if problems:
+        raise SystemExit('refusing to write %s:\n  %s\n\nSee FIRMWARE.md.'
+            % (sys.argv[2], '\n  '.join(problems)))
 
     out = bytearray()
     for address, payload in found:

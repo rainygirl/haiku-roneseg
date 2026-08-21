@@ -11,15 +11,19 @@ Haiku OS 用の ISDB-T ワンセグ受信アプリです。日本国内向け So
 モジュールは電源投入時にファームウェアを持っていません。`oneseg_fw.rec` が無い
 状態では、USB 上には見えていてもストリーム用エンドポイントが出ないため、
 **スキャンは 1 チャンネルも見つけません**。イメージはソニーのものなので同梱して
-おらず、お手元の実機のドライバから生成します:
+おらず、お手元の実機のドライバから生成します。
+
+やることは、**Windows 用ドライバ `vscd.sys` をこのスクリプトの隣かデスクトップに
+置いて `./install.sh` を実行するだけ**です。抽出・検証・設置まで自動で行い、
+結果を 1 行で報告します:
 
 ```
-python3 recovery/extract_fw.py vscd.sys ~/config/settings/roneseg/oneseg_fw.rec
+==> firmware: 666 records, 8597 bytes, loading to 0x0000-0x2207, reset vector LJMP 0x1aae
 ```
 
-手順と、うまく取り出せないときの対処は **[FIRMWARE.md](FIRMWARE.md)** に
-まとめてあります。イメージが所定の場所にあるかは
-`ROneSeg --list-usb` の `Firmware:` 行で確認できます。
+ドライバの入手元、別の場所にある場合の指定 (`--driver`)、取り出せないときの対処は
+**[FIRMWARE.md](FIRMWARE.md)** にまとめてあります。設置状況は
+`ROneSeg --list-usb` の `Firmware:` 行でも確認できます。
 
 ## ビルド
 

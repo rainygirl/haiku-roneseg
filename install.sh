@@ -4,6 +4,15 @@ set -e
 
 cd "$(dirname "$0")"
 
+# --driver PATH points at the Windows driver to take the firmware from, for
+# when it is somewhere this would not think to look. Everything else is passed
+# through to make.
+DRIVER=
+if [ "$1" = "--driver" ]; then
+	DRIVER="$2"
+	shift 2
+fi
+
 if [ "$(uname)" != "Haiku" ]; then
 	echo "This builds against the Haiku SDK and only runs on Haiku." >&2
 	exit 1
@@ -44,13 +53,80 @@ FWDIR="$HOME/config/settings/roneseg"
 mkdir -p "$FWDIR"
 # The firmware is not shipped - you supply it, extracted from a driver you
 # already have for the device. If a copy is present locally, install it.
-if [ -f recovery/oneseg_fw.rec ]; then
-	cp recovery/oneseg_fw.rec "$FWDIR/oneseg_fw.rec"
-	echo "==> firmware installed to $FWDIR/oneseg_fw.rec"
+EXTRACT="python3 recovery/extract_fw.py"
+
+# Where a Windows driver might plausibly be sitting. The module needs the
+# firmware image out of vscd.sys, and asking someone to run the extractor by
+# hand is asking them to get the arguments right for a file they have never
+# looked inside - so find it and do it here.
+find_driver() {
+	if [ -n "$DRIVER" ]; then
+		echo "$DRIVER"
+		return
+	fi
+	for dir in . "$HOME" "$HOME/Desktop" "$HOME/Downloads" "$HOME/driver" \
+		"$HOME/drivers"; do
+		[ -d "$dir" ] || continue
+		# -iname: it comes off a Windows volume, so VSCD.SYS is as likely.
+		found=$(find "$dir" -maxdepth 3 -iname 'vscd.sys' -type f 2>/dev/null \
+			| head -n 1)
+		if [ -n "$found" ]; then
+			echo "$found"
+			return
+		fi
+	done
+}
+
+install_firmware() {
+	if [ -f recovery/oneseg_fw.rec ]; then
+		cp recovery/oneseg_fw.rec "$FWDIR/oneseg_fw.rec"
+		echo "==> firmware installed from recovery/oneseg_fw.rec"
+		return 0
+	fi
+	if [ -f "$FWDIR/oneseg_fw.rec" ]; then
+		return 0				# already there; validated below
+	fi
+
+	DRIVER_FILE=$(find_driver)
+	if [ -z "$DRIVER_FILE" ]; then
+		return 1
+	fi
+
+	if ! command -v python3 > /dev/null 2>&1; then
+		echo "==> found $DRIVER_FILE but python3 is missing:" >&2
+		echo "    pkgman install python3   then re-run ./install.sh" >&2
+		return 1
+	fi
+
+	echo "==> extracting firmware from $DRIVER_FILE"
+	# Into a temporary file first: a driver build this cannot parse must not
+	# leave a half-written image where the app would try to upload it. The
+	# extractor's own output is kept back unless it fails, since the summary
+	# gets printed once below either way.
+	TEMP="$FWDIR/oneseg_fw.rec.new"
+	if OUTPUT=$($EXTRACT "$DRIVER_FILE" "$TEMP" 2>&1 \
+		&& $EXTRACT --check "$TEMP" 2>&1); then
+		mv "$TEMP" "$FWDIR/oneseg_fw.rec"
+		return 0
+	fi
+	echo "$OUTPUT" >&2
+	rm -f "$TEMP"
+	return 1
+}
+
+if install_firmware; then
 	FIRMWARE=yes
-elif [ -f "$FWDIR/oneseg_fw.rec" ]; then
-	echo "==> firmware already present at $FWDIR/oneseg_fw.rec"
-	FIRMWARE=yes
+	# Say what is actually installed rather than that something is: a
+	# truncated or wrong-driver image is the one failure that looks like
+	# working hardware misbehaving.
+	if command -v python3 > /dev/null 2>&1; then
+		printf '==> firmware: '
+		if ! $EXTRACT --check "$FWDIR/oneseg_fw.rec"; then
+			FIRMWARE=no
+		fi
+	else
+		echo "==> firmware: $FWDIR/oneseg_fw.rec (install python3 to verify it)"
+	fi
 else
 	FIRMWARE=no
 fi
@@ -80,12 +156,17 @@ echo "  Alt-U shows the USB report; --play capture.ts replays a file."
 
 if [ "$FIRMWARE" = no ]; then
 	echo
-	echo "WARNING: no firmware image at $FWDIR/oneseg_fw.rec."
-	echo "The module powers up blank, so until that file exists it exposes no"
-	echo "streaming endpoint and a scan will find nothing - the hardware looks"
-	echo "dead when it is not. Generate it from your own machine's driver:"
+	echo "WARNING: there is no firmware image, so the tuner will find nothing."
+	echo "The module powers up blank: until it is given its firmware it exposes"
+	echo "no streaming endpoint, and a scan comes back empty however healthy the"
+	echo "hardware is."
 	echo
-	echo "  python3 recovery/extract_fw.py vscd.sys $FWDIR/oneseg_fw.rec"
+	echo "Copy vscd.sys - the Windows driver for this machine's tuner - next to"
+	echo "this script (or onto the Desktop) and run ./install.sh again. It will"
+	echo "extract, check and install the image for you. If it is somewhere else:"
 	echo
-	echo "See FIRMWARE.md. Check with: ROneSeg --list-usb"
+	echo "  ./install.sh --driver /path/to/vscd.sys"
+	echo
+	echo "Where to get vscd.sys, and what to do if it cannot be parsed:"
+	echo "FIRMWARE.md"
 fi
