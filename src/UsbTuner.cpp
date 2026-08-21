@@ -119,6 +119,34 @@ SettingsPath(BPath* path, bool createDirectory)
 }
 
 
+// Where a firmware image is looked for, in order. Shared by LocateFirmware()
+// and the USB report, so the report cannot claim a file the loader would not
+// find - the whole point of printing it.
+std::string
+FindFirmwareFile(const std::string& preferred)
+{
+	const char* candidates[] = {
+		NULL,		// filled from `preferred` below
+		"/boot/home/config/settings/roneseg/oneseg_fw.rec",
+		"/boot/home/config/non-packaged/data/roneseg/oneseg_fw.rec",
+		"/boot/home/fwtool/oneseg_fw.rec",
+		"oneseg_fw.rec",
+	};
+	candidates[0] = preferred.empty() ? NULL : preferred.c_str();
+
+	for (size_t i = 0; i < sizeof(candidates) / sizeof(candidates[0]); i++) {
+		if (candidates[i] == NULL)
+			continue;
+		FILE* file = fopen(candidates[i], "rb");
+		if (file != NULL) {
+			fclose(file);
+			return std::string(candidates[i]);
+		}
+	}
+	return std::string();
+}
+
+
 const char* kSettingHigh = "frequency register high";
 const char* kSettingLow = "frequency register low";
 const char* kSettingLatch = "latch value";
@@ -504,6 +532,27 @@ UsbTuner::Scan()
 std::string
 UsbTuner::ScanReport()
 {
+	// Whether the firmware image is where the loader will look for it. Printed
+	// unconditionally, because its absence is invisible otherwise: the module
+	// enumerates, answers control transfers, and still cannot stream, so a
+	// scan finds nothing and the hardware looks broken when it is not.
+	std::string firmware;
+	std::string path = FindFirmwareFile(std::string());
+	if (path.empty()) {
+		firmware =
+			"Firmware: oneseg_fw.rec NOT FOUND.\n"
+			"  The module powers up blank. Until its firmware is uploaded it\n"
+			"  exposes no streaming endpoint, so a scan finds nothing however\n"
+			"  healthy the hardware is - which is what an absent image looks\n"
+			"  like from the outside.\n"
+			"  Looked in ~/config/settings/roneseg/,\n"
+			"  ~/config/non-packaged/data/roneseg/, ~/fwtool/ and the current\n"
+			"  directory. Extract it from your own machine's Windows driver\n"
+			"  with recovery/extract_fw.py - see FIRMWARE.md.\n";
+	} else {
+		firmware = "Firmware: " + path + "\n";
+	}
+
 	std::vector<Candidate> candidates = Scan();
 
 	std::string report;
@@ -514,7 +563,8 @@ UsbTuner::ScanReport()
 			"On a VAIO P the internal module sits on a UHCI companion, which\n"
 			"enumerates nothing without the SCH USBLEGSUP fix from the VAIO P\n"
 			"patch set - check you are running that ISO - and the module may\n"
-			"only appear a few seconds after boot.\n";
+			"only appear a few seconds after boot.\n"
+			"\n" + firmware;
 		return report;
 	}
 
@@ -536,8 +586,9 @@ UsbTuner::ScanReport()
 	report +=
 		"054c:0279 is the One-Seg module. If it shows bcdDevice 0 and no bulk\n"
 		"endpoint, it is a blank Cypress bootloader - R One-Seg uploads its\n"
-		"firmware automatically on the first tune, after which it renumerates\n"
-		"as \"CXD9192 Controller\" and streams.\n";
+		"firmware on the first tune, after which it renumerates as \"CXD9192\n"
+		"Controller\" and streams. That upload needs the image below.\n"
+		"\n" + firmware;
 	return report;
 }
 
@@ -548,25 +599,7 @@ UsbTuner::ScanReport()
 std::string
 UsbTuner::LocateFirmware() const
 {
-	const char* candidates[] = {
-		NULL,		// filled from fFirmwarePath below
-		"/boot/home/config/settings/roneseg/oneseg_fw.rec",
-		"/boot/home/config/non-packaged/data/roneseg/oneseg_fw.rec",
-		"/boot/home/fwtool/oneseg_fw.rec",
-		"oneseg_fw.rec",
-	};
-	candidates[0] = fFirmwarePath.empty() ? NULL : fFirmwarePath.c_str();
-
-	for (size_t i = 0; i < sizeof(candidates) / sizeof(candidates[0]); i++) {
-		if (candidates[i] == NULL)
-			continue;
-		FILE* file = fopen(candidates[i], "rb");
-		if (file != NULL) {
-			fclose(file);
-			return std::string(candidates[i]);
-		}
-	}
-	return std::string();
+	return FindFirmwareFile(fFirmwarePath);
 }
 
 
@@ -597,8 +630,9 @@ UsbTuner::UploadFirmware()
 {
 	std::string path = LocateFirmware();
 	if (path.empty()) {
-		SetLastError("the module needs its firmware, but oneseg_fw.rec was not "
-			"found - put it in ~/config/settings/roneseg/");
+		SetLastError("the module needs its firmware: put oneseg_fw.rec in "
+			"~/config/settings/roneseg/ (extract it with "
+			"recovery/extract_fw.py - see FIRMWARE.md)");
 		return B_ENTRY_NOT_FOUND;
 	}
 

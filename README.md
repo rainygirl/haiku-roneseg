@@ -6,7 +6,28 @@ Haiku OS 用の ISDB-T ワンセグ受信アプリです。日本国内向け So
 
 [한국어](README.ko.md)
 
+## ファームウェアが必要です
+
+モジュールは電源投入時にファームウェアを持っていません。`oneseg_fw.rec` が無い
+状態では、USB 上には見えていてもストリーム用エンドポイントが出ないため、
+**スキャンは 1 チャンネルも見つけません**。イメージはソニーのものなので同梱して
+おらず、お手元の実機のドライバから生成します:
+
+```
+python3 recovery/extract_fw.py vscd.sys ~/config/settings/roneseg/oneseg_fw.rec
+```
+
+手順と、うまく取り出せないときの対処は **[FIRMWARE.md](FIRMWARE.md)** に
+まとめてあります。イメージが所定の場所にあるかは
+`ROneSeg --list-usb` の `Firmware:` 行で確認できます。
+
 ## ビルド
+
+必要な開発パッケージ (gcc2 ハイブリッドでは iconv を両方のアーキテクチャ分):
+
+```
+pkgman install libiconv_devel libiconv_x86_devel
+```
 
 実機上で Haiku SDK を使って:
 

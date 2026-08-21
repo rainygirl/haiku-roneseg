@@ -3,9 +3,15 @@ objects.*/
 AGENTS.md
 AGENTS.ja.md
 AGENTS.ko.md
-recovery/
+# The recovery apparatus ships (it is how an owner regenerates the firmware
+# for their own module); the vendor-derived image and the engineering log do
+# not.
+recovery/oneseg_fw.rec
+recovery/*.bin
+recovery/docs/
 *.asm
 *.iso
 *.log
 tuner-capture.ts
 oneseg-test.ts
+__pycache__/

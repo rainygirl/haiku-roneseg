@@ -20,7 +20,17 @@ else
 fi
 
 echo "==> building"
-$MAKE "$@"
+# iconv is a real link dependency (ARIB text goes through EUC-JP), and on the
+# gcc2 hybrid it is two packages: the primary one for the headers and the
+# _x86_ one for the secondary architecture this actually builds for. Missing
+# either fails as "iconv.h not found" or "cannot find -liconv", so say so here
+# rather than leaving it to be worked out from the linker.
+if ! $MAKE "$@"; then
+	echo >&2
+	echo "build failed. If it could not find iconv.h or -liconv:" >&2
+	echo "  pkgman install libiconv_devel libiconv_x86_devel" >&2
+	exit 1
+fi
 
 BINARY=$(find objects.* -maxdepth 1 -name ROneSeg -type f | head -n 1)
 if [ -z "$BINARY" ]; then
@@ -37,13 +47,25 @@ mkdir -p "$FWDIR"
 if [ -f recovery/oneseg_fw.rec ]; then
 	cp recovery/oneseg_fw.rec "$FWDIR/oneseg_fw.rec"
 	echo "==> firmware installed to $FWDIR/oneseg_fw.rec"
+	FIRMWARE=yes
+elif [ -f "$FWDIR/oneseg_fw.rec" ]; then
+	echo "==> firmware already present at $FWDIR/oneseg_fw.rec"
+	FIRMWARE=yes
+else
+	FIRMWARE=no
 fi
 
 # Applications: the user apps folder, and a Desktop launcher beside it.
 # ~/config/apps is packagefs and read-only - a write there fails with
 # "Read-only file system" - so user-built applications go to non-packaged.
 APPS="$HOME/config/non-packaged/apps"
-mkdir -p "$APPS"
+if ! mkdir -p "$APPS" 2>/dev/null; then
+	echo "cannot create $APPS." >&2
+	echo "Everything under ~/config except non-packaged/ and settings/ is a" >&2
+	echo "read-only packagefs view; if non-packaged is not writable either," >&2
+	echo "install by hand: cp $BINARY somewhere on a writable volume." >&2
+	exit 1
+fi
 cp "$BINARY" "$APPS/ROneSeg"
 mimeset -f "$APPS/ROneSeg"
 ln -sf "$APPS/ROneSeg" "$HOME/Desktop/ROneSeg"
@@ -55,3 +77,15 @@ echo "  double-click ROneSeg (Desktop or ~/config/non-packaged/apps)"
 echo "  then press Alt-S to scan - it walks the UHF channels, marks the ones"
 echo "  a stream comes out of, and plays the first. Arrow keys + Enter retune."
 echo "  Alt-U shows the USB report; --play capture.ts replays a file."
+
+if [ "$FIRMWARE" = no ]; then
+	echo
+	echo "WARNING: no firmware image at $FWDIR/oneseg_fw.rec."
+	echo "The module powers up blank, so until that file exists it exposes no"
+	echo "streaming endpoint and a scan will find nothing - the hardware looks"
+	echo "dead when it is not. Generate it from your own machine's driver:"
+	echo
+	echo "  python3 recovery/extract_fw.py vscd.sys $FWDIR/oneseg_fw.rec"
+	echo
+	echo "See FIRMWARE.md. Check with: ROneSeg --list-usb"
+fi
