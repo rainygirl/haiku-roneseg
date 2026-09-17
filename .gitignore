@@ -3,6 +3,7 @@ objects.*/
 AGENTS.md
 AGENTS.ja.md
 AGENTS.ko.md
+*report-ko.md
 # The recovery apparatus ships (it is how an owner regenerates the firmware
 # for their own module); the vendor-derived image and the engineering log do
 # not.
