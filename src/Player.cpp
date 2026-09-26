@@ -31,6 +31,9 @@ struct Player::Session {
 	uint64				generation;
 
 	media_format		videoFormat;
+	// Nominal frame rate from the encoded format; paces video when the
+	// decoder's timestamps cannot be trusted. 0 when unknown.
+	float				videoFieldRate;
 	media_raw_audio_format audioFormat;
 
 	// Audio frames handed to the mixer. The video clock is derived from
@@ -65,7 +68,7 @@ struct Player::Session {
 		:
 		owner(NULL), tuner(NULL), io(NULL), mediaFile(NULL), videoTrack(NULL),
 		audioTrack(NULL), soundPlayer(NULL), videoThread(-1), setupThread(-1),
-		generation(0), framesPlayed(0), stopRequested(0), droppedFrames(0),
+		generation(0), videoFieldRate(0), framesPlayed(0), stopRequested(0), droppedFrames(0),
 		audioRing(NULL), audioRingSize(0), audioWritten(0), audioRead(0),
 		audioThread(-1), audioFrameSize(0), audioUnderruns(0)
 	{
@@ -209,6 +212,7 @@ Player::RunSetup(Session* session)
 		}
 
 		if (format.IsVideo() && session->videoTrack == NULL) {
+			session->videoFieldRate = format.u.encoded_video.output.field_rate;
 			// Cast through void*: media_format has non-trivial copy assignment,
 		// which -Wclass-memaccess warns about, but zeroing it is exactly
 		// what the Media Kit expects before a DecodedFormat() negotiation.
@@ -512,6 +516,18 @@ Player::RunVideo(Session* session)
 	// perfectly. The first frame decoded defines the origin instead.
 	bigtime_t origin = -1;
 
+	// Stream time is accumulated from per-frame steps rather than read off
+	// the timestamp directly. On a real 1seg broadcast (TNU, 14.985 fps) the
+	// Media Kit's start_time advanced by about 3 ms per frame instead of
+	// 66.7 ms, so every frame looked late, was shown at once, and a 22 s
+	// capture went by in 5.5 s. A step outside a plausible frame interval is
+	// replaced by the nominal one from the encoded frame rate.
+	const double fieldRate = session->videoFieldRate > 1.0f
+		? session->videoFieldRate : 15.0;
+	const bigtime_t nominalStep = (bigtime_t)(1000000.0 / fieldRate);
+	bigtime_t streamTime = 0;
+	bigtime_t lastStart = -1;
+
 	while (atomic_get(&session->stopRequested) == 0) {
 		int64 frameCount = 0;
 		media_header header;
@@ -519,6 +535,16 @@ Player::RunVideo(Session* session)
 			&frameCount, &header);
 		if (status != B_OK)
 			break;
+		if (frameCount <= 0)
+			continue;
+
+		if (lastStart >= 0) {
+			bigtime_t step = header.start_time - lastStart;
+			if (step < 10000 || step > 250000)
+				step = nominalStep;
+			streamTime += step;
+		}
+		lastStart = header.start_time;
 
 		// Where playback actually is, in stream time.
 		bigtime_t now;
@@ -532,9 +558,9 @@ Player::RunVideo(Session* session)
 		}
 
 		if (origin < 0)
-			origin = header.start_time;
+			origin = streamTime;
 
-		bigtime_t due = header.start_time - origin;
+		bigtime_t due = streamTime - origin;
 
 		if (due > now) {
 			bigtime_t wait = due - now;
@@ -548,7 +574,7 @@ Player::RunVideo(Session* session)
 			// A whole second behind is not a slow decoder, it is the two
 			// clocks having genuinely parted company - a PTS discontinuity,
 			// or a retune. Rebase onto the current position.
-			origin = header.start_time - now;
+			origin = streamTime - now;
 			session->droppedFrames++;
 		}
 

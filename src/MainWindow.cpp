@@ -126,6 +126,10 @@ MainWindow::BuildLayout()
 	fVideoView->SetExplicitMinSize(BSize(320, 240));
 
 	fStatusView = new BStringView("status", "");
+	// A BStringView's maximum width is its text width, and with
+	// B_AUTO_UPDATE_SIZE_LIMITS that became the window's maximum width: the
+	// window opened narrower than asked and could not be widened at all.
+	fStatusView->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNSET));
 
 	BuildMenu();
 
@@ -744,8 +748,8 @@ MainWindow::MessageReceived(BMessage* message)
 		case kMsgToggleScale:
 			fVideoView->SetScaled(!fVideoView->IsScaled());
 			SetStatusText(fVideoView->IsScaled()
-				? "scaled to fit - costs CPU this machine does not have"
-				: "1:1");
+				? "fit to window"
+				: "1:1 - original size, least CPU");
 			break;
 
 		case TunerAdapterIO::kServiceNameMessage:

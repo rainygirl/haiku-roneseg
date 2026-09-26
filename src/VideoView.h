@@ -18,9 +18,10 @@
 //
 // So: aspect is preserved (a stretched broadcast picture is wrong, and the
 // VAIO P panel is far wider than 4:3, so stretching to fill would be very
-// wrong), and there is a 1:1 mode that turns scaling off entirely. On a
-// 1.33 GHz single-threaded Atom, 1:1 is not a fussy preference - it is the
-// difference between keeping up and not.
+// wrong). By default the picture is fitted to the view and refitted whenever
+// the window is resized - 320x180 drawn 1:1 was a postage stamp on the
+// 1600x768 panel. Alt-F switches to 1:1, which turns scaling off entirely
+// for when the Atom cannot keep up.
 class VideoView : public BView {
 public:
 	VideoView();
@@ -28,6 +29,7 @@ public:
 
 	virtual void Draw(BRect updateRect);
 	virtual void AttachedToWindow();
+	virtual void FrameResized(float width, float height);
 
 	// Copies the frame in. Called from the decode thread.
 	//
@@ -48,11 +50,25 @@ public:
 
 private:
 	BRect FrameRect() const;
+	// Source rectangle without the broadcaster's side bars.
+	BRect SourceRect() const;
+	void MeasureSideBars();
 
 	mutable BLocker	fLock;
 	BBitmap*		fFrame;
 	std::string		fPlaceholder;
 	bool			fScaled;
+
+	// Black side bars inside the picture, e.g. TNU sends 4:3 pillarboxed in
+	// a 320x180 frame. A column only counts as a bar if it was black in every
+	// one of the recent frames, so a dark scene is never mistaken for one.
+	static const int kBarHistory = 45;		// ~3 s at 15 fps
+	int				fBarLeft[kBarHistory];
+	int				fBarRight[kBarHistory];
+	int				fBarCount;
+	int				fBarPos;
+	int				fCropLeft;
+	int				fCropRight;
 };
 
 #endif
