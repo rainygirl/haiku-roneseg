@@ -20,6 +20,7 @@
 
 #include <new>
 
+#include "DiagnosticWindow.h"
 #include "FileTuner.h"
 #include "Player.h"
 #include "TunerAdapterIO.h"
@@ -39,6 +40,7 @@ static const uint32 kMsgSweepDone = 'SwDn';
 static const uint32 kMsgSettings = 'Setg';
 static const uint32 kMsgApplySettings = 'AplS';
 static const uint32 kMsgQuit = 'Quit';
+static const uint32 kMsgDiagnose = 'Diag';
 
 
 MainWindow::MainWindow(const std::string& capturePath)
@@ -69,7 +71,8 @@ MainWindow::MainWindow(const std::string& capturePath)
 	fSweepChannel(-1),
 	fSweepSavedHigh(0),
 	fSweepSavedLow(0),
-	fSweepSavedLatch(0)
+	fSweepSavedLatch(0),
+	fDiagnosticTuner(NULL)
 {
 	BuildLayout();
 
@@ -96,8 +99,78 @@ MainWindow::MainWindow(const std::string& capturePath)
 
 MainWindow::~MainWindow()
 {
+	CloseDiagnostic();
 	delete fPlayer;
 	delete fTuner;
+	delete fDiagnosticTuner;
+}
+
+
+// Synchronous: the diagnostic thread uses a tuner this window owns, so the
+// diagnostic window has to be gone before either is deleted.
+void
+MainWindow::CloseDiagnostic()
+{
+	if (!fDiagnostic.IsValid())
+		return;
+	BMessage reply;
+	fDiagnostic.SendMessage(B_QUIT_REQUESTED, &reply);
+	fDiagnostic = BMessenger();
+}
+
+
+bool
+MainWindow::DiagnosticBusy()
+{
+	if (!fDiagnostic.IsValid())
+		return false;
+	SetStatusText("チューナー診断中 - 診断ウィンドウを閉じてください");
+	return true;
+}
+
+
+void
+MainWindow::ShowDiagnostic()
+{
+	if (fDiagnostic.IsValid()) {
+		BLooper* looper = NULL;
+		fDiagnostic.Target(&looper);
+		BWindow* window = dynamic_cast<BWindow*>(looper);
+		if (window != NULL && window->Lock()) {
+			window->Activate();
+			window->Unlock();
+		}
+		return;
+	}
+	if (fScanThread >= 0) {
+		SetStatusText("スキャン中は診断できません");
+		return;
+	}
+
+	// The diagnostic drives the module directly, so playback must stop.
+	fPlayer->Stop();
+
+	UsbTuner* usb = dynamic_cast<UsbTuner*>(fTuner);
+	if (usb == NULL) {
+		// Replaying a capture: the internal tuner is not otherwise in use,
+		// so the diagnostic gets an instance of its own.
+		if (fDiagnosticTuner == NULL) {
+			fDiagnosticTuner = new(std::nothrow) UsbTuner();
+			if (fDiagnosticTuner == NULL)
+				return;
+			fDiagnosticTuner->LoadSettings();
+		}
+		usb = fDiagnosticTuner;
+	}
+
+	BRect frame(0, 0, 640, 480);
+	frame.OffsetTo(Frame().left + 40, Frame().top + 40);
+	DiagnosticWindow* window = new(std::nothrow) DiagnosticWindow(frame, usb);
+	if (window == NULL)
+		return;
+	fDiagnostic = BMessenger(window);
+	window->Show();
+	SetStatusText("チューナー診断を実行中...");
 }
 
 
@@ -175,6 +248,10 @@ MainWindow::BuildMenu()
 		new BMessage(kMsgSweep)));
 	file->AddItem(new BMenuItem("設定" B_UTF8_ELLIPSIS,
 		new BMessage(kMsgSettings)));
+	// Checks the internal module stage by stage without needing a broadcast:
+	// USB, firmware, register bus, demodulator, then the channel sweep.
+	file->AddItem(new BMenuItem("チューナー診断" B_UTF8_ELLIPSIS,
+		new BMessage(kMsgDiagnose)));
 	file->AddSeparatorItem();
 	file->AddItem(new BMenuItem("終了", new BMessage(kMsgQuit), 'Q'));
 	fMenuBar->AddItem(file);
@@ -194,6 +271,9 @@ MainWindow::TuneToSelection()
 {
 	int32 selected = fChannelList->CurrentSelection();
 	if (selected < 0 || fTuner == NULL)
+		return;
+
+	if (DiagnosticBusy())
 		return;
 
 	const ChannelTable::Channel& channel = fChannels[selected];
@@ -224,6 +304,8 @@ MainWindow::StartScan()
 {
 	if (fScanThread >= 0)
 		return;					// already scanning
+	if (DiagnosticBusy())
+		return;
 
 	// Scanning drives the tuner directly, so nothing else may be reading it.
 	fPlayer->Stop();
@@ -301,6 +383,8 @@ MainWindow::StartSweep()
 {
 	if (fScanThread >= 0)
 		return;					// a scan or a sweep is already running
+	if (DiagnosticBusy())
+		return;
 
 	fPlayer->Stop();
 
@@ -445,9 +529,9 @@ MainWindow::ShowSettings()
 	panel->CenterIn(Frame());
 
 	BRadioButton* presetDefault = new BRadioButton("preset-default",
-		"既定  32 / 33  ラッチ 01", NULL);
+		"既定  64 / 67  ラッチ 10", NULL);
 	BRadioButton* presetAlternate = new BRadioButton("preset-alt",
-		"代替  64 / 67  ラッチ 10", NULL);
+		"代替  32 / 33  ラッチ 01", NULL);
 	BRadioButton* presetCustom = new BRadioButton("preset-custom",
 		"手動指定 (16進):", NULL);
 
@@ -458,11 +542,11 @@ MainWindow::ShowSettings()
 
 	// Whichever of the three the tuner is currently on starts selected, so the
 	// panel always opens showing the truth rather than a default.
-	if (usb->FrequencyRegister() == 0x32 && usb->FrequencyRegisterLow() == 0x33
-		&& usb->LatchValue() == 0x01) {
+	if (usb->FrequencyRegister() == 0x64 && usb->FrequencyRegisterLow() == 0x67
+		&& usb->LatchValue() == 0x10) {
 		presetDefault->SetValue(B_CONTROL_ON);
-	} else if (usb->FrequencyRegister() == 0x64
-		&& usb->FrequencyRegisterLow() == 0x67 && usb->LatchValue() == 0x10) {
+	} else if (usb->FrequencyRegister() == 0x32
+		&& usb->FrequencyRegisterLow() == 0x33 && usb->LatchValue() == 0x01) {
 		presetAlternate->SetValue(B_CONTROL_ON);
 	} else {
 		presetCustom->SetValue(B_CONTROL_ON);
@@ -543,10 +627,10 @@ MainWindow::ApplySettings(BMessage* message)
 		uint8 high, low, latch;
 		if (fPresetDefault != NULL
 			&& fPresetDefault->Value() == B_CONTROL_ON) {
-			high = 0x32; low = 0x33; latch = 0x01;
+			high = 0x64; low = 0x67; latch = 0x10;
 		} else if (fPresetAlternate != NULL
 			&& fPresetAlternate->Value() == B_CONTROL_ON) {
-			high = 0x64; low = 0x67; latch = 0x10;
+			high = 0x32; low = 0x33; latch = 0x01;
 		} else {
 			high = HexByte(fSettingsField, usb->FrequencyRegister());
 			low = HexByte(fSettingsLowField, usb->FrequencyRegisterLow());
@@ -599,6 +683,10 @@ MainWindow::MessageReceived(BMessage* message)
 
 		case kMsgSweep:
 			StartSweep();
+			break;
+
+		case kMsgDiagnose:
+			ShowDiagnostic();
 			break;
 
 		case kMsgSettings:
@@ -824,6 +912,7 @@ MainWindow::QuitRequested()
 		SetStatusText("stopping scan...");
 		return false;
 	}
+	CloseDiagnostic();
 	fPlayer->Stop();
 	be_app->PostMessage(B_QUIT_REQUESTED);
 	return true;

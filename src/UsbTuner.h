@@ -99,6 +99,16 @@ public:
 	};
 	Diagnostic LastDiagnostic() const { return fDiagnostic; }
 
+	// Reads count consecutive registers of a bus sub-device (0x50 EEPROM,
+	// 0x6E demodulator) in one vendor request 0x21, which returns the bytes
+	// directly (wValue = count). count is at most 64, one EP0 packet. Returns
+	// false on a short read or a timeout. Used by the diagnostic, which has to
+	// spend as few transfers as possible - see AGENTS.md on parked threads.
+	bool ReadRegisters(uint8 sub, uint8 base, uint8* out, uint8 count);
+	// Public for the diagnostic's write/read-back test.
+	bool PokeRegister(uint8 sub, uint8 reg, uint8 value)
+		{ return WriteRegister(sub, reg, value); }
+
 	// Where the frequency word goes: two demodulator registers taking the high
 	// and low bytes of V = 7 x f_MHz, and the value pulsed into the 0x42 latch
 	// around them.
@@ -107,13 +117,14 @@ public:
 	// readings of DtvCore.dll disagree, so all three are adjustable rather than
 	// compiled in. The two candidates worth trying in the field:
 	//
-	//   0x32 / 0x33, latch 0x01   the default - the demodulator init table
-	//                             leaves 0x32-0x35 at zero, and the tuning
-	//                             orchestrator writes there
-	//   0x64 / 0x67, latch 0x10   what the caller-side disassembly at
-	//                             DtvCore.dll 0x100905f7 spells out, with the
-	//                             registers NOT adjacent (see
-	//                             recovery/docs/tuning-progress.md)
+	//   0x64 / 0x67, latch 0x10   the default - what the caller-side
+	//                             disassembly at DtvCore.dll 0x100905f7 spells
+	//                             out, registers NOT adjacent (see
+	//                             recovery/docs/tuning-progress.md); the only
+	//                             layout the chip was seen to take in
+	//   0x32 / 0x33, latch 0x01   the former default - the demodulator init
+	//                             table leaves 0x32-0x35 at zero, and the
+	//                             tuning orchestrator writes there
 	//
 	// The second cannot be expressed by a single base register, which is why
 	// the low register is set separately rather than being high + 1.

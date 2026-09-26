@@ -24,8 +24,8 @@
 //     firmware relays register access, so the host writes every register value.
 //   * Bring-up is two fixed sequences: the demodulator (sub 0x6E) and the RF
 //     front end (sub 0x6C table + sub 0x60 tuner). Neither depends on channel.
-//   * A channel is the frequency word V = 7 x f_MHz, written to demod 0x32/0x33
-//     and latched with a 0x42 pulse. If a signal is present and no channel
+//   * A channel is the frequency word V = 7 x f_MHz, written to demod 0x64/0x67
+//     and latched with a 0x42 = 0x10 pulse. If a signal is present and no channel
 //     locks, this select register is the first thing to adjust - see Tune().
 //
 // The exact lock register is not identified; the scanner does not need it. It
@@ -46,6 +46,8 @@ const uint16 kProduct = 0x0279;
 const uint8 kVendorOut = 0x40;
 const uint8 kFirmwareLoad = 0xA0;			// EZ-USB bootloader firmware download
 const uint16 kCpuCsRegister = 0xE600;
+const uint8 kVendorIn = 0xC0;
+const uint8 kRegisterRead = 0x21;
 const uint8 kRegisterWrite = 0x20;
 const uint8 kSetMode = 0x23;
 const uint8 kFifoReset = 0x27;
@@ -92,8 +94,9 @@ const uint8 kTuner60[][2] = {
 // code. Short on purpose: this runs against one channel at a time, and a list
 // long enough to be "thorough" would be too slow to sit through.
 const UsbTuner::TuningCandidate kTuningCandidates[] = {
-	{ 0x32, 0x33, 0x01 },		// the default
-	{ 0x64, 0x67, 0x10 },		// DtvCore.dll 0x100905f7, latch 0x42 = 0x10
+	{ 0x64, 0x67, 0x10 },		// the default: DtvCore.dll 0x100905f7, and the
+								// only layout the chip takes in (diagnostic)
+	{ 0x32, 0x33, 0x01 },		// the former default
 	{ 0x64, 0x67, 0x01 },
 	{ 0x32, 0x33, 0x10 },
 	{ 0x64, 0x65, 0x01 },
@@ -296,9 +299,13 @@ UsbTuner::UsbTuner()
 	fProfile(NULL),
 	fReady(false),
 	fFrequency(0),
-	fFrequencyReg(0x32),
-	fFrequencyRegLow(0x33),
-	fLatchValue(0x01)
+	// 0x64/0x67 with latch 0x10: the only layout the demodulator was seen
+	// to take in (register 0x10 then holds V's high byte on every channel -
+	// see the tuner diagnostic in AGENTS.md). Until 2026-09 this was
+	// 0x32/0x33 latch 0x01, which the chip ignored.
+	fFrequencyReg(0x64),
+	fFrequencyRegLow(0x67),
+	fLatchValue(0x10)
 {
 }
 
@@ -794,6 +801,16 @@ UsbTuner::WriteRegister(uint8 sub, uint8 reg, uint8 value)
 }
 
 
+bool
+UsbTuner::ReadRegisters(uint8 sub, uint8 base, uint8* out, uint8 count)
+{
+	if (out == NULL || count == 0 || count > 64)
+		return false;
+	return ControlTimed(kVendorIn, kRegisterRead, count,
+		(uint16)((sub << 8) | base), count, out, 1000000) == (ssize_t)count;
+}
+
+
 status_t
 UsbTuner::BringUp()
 {
@@ -896,10 +913,10 @@ UsbTuner::Tune(uint64 frequencyHz)
 	int v = (int)lround(7.0 * mhz);
 
 	// Frequency word, then the 0x42 latch pulse. Both registers and the latch
-	// value are configurable (default 0x32/0x33, latch 0x01); if a signal is
-	// present and nothing locks, this is the first thing to adjust - the other
-	// candidate read out of DtvCore.dll is 0x64/0x67 with latch 0x10, which is
-	// why the low register is not assumed to be the high one plus one.
+	// value are configurable (default 0x64/0x67, latch 0x10 - the registers
+	// are not adjacent, which is why the low one is not assumed to be the high
+	// one plus one); if a signal is present and nothing locks, this is the
+	// first thing to adjust, the other reading being 0x32/0x33 latch 0x01.
 	if (!WriteRegister(kDemod, fFrequencyReg, (uint8)(v >> 8))
 		|| !WriteRegister(kDemod, fFrequencyRegLow, (uint8)(v & 0xFF))) {
 		SetLastError("could not write the frequency");

@@ -1,6 +1,7 @@
 #ifndef RONESEG_MAIN_WINDOW_H
 #define RONESEG_MAIN_WINDOW_H
 
+#include <Messenger.h>
 #include <Window.h>
 
 #include <string>
@@ -18,6 +19,8 @@ class BWindow;
 class Player;
 class Tuner;
 class VideoView;
+
+class UsbTuner;
 
 class MainWindow : public BWindow {
 public:
@@ -40,6 +43,10 @@ private:
 	static uint8 HexByte(BTextControl* field, uint8 fallback);
 	void StartScan();
 	void StartSweep();
+	void ShowDiagnostic();
+	void CloseDiagnostic();
+	// True (and says so) while the diagnostic window holds the tuner.
+	bool DiagnosticBusy();
 	void FinishScanUi();
 	void SetStatusText(const std::string& text);
 
@@ -58,8 +65,8 @@ private:
 	BTextControl*	fSettingsField;			// frequency register, high byte
 	BTextControl*	fSettingsLowField;		// frequency register, low byte
 	BTextControl*	fSettingsLatchField;	// value pulsed into demod 0x42
-	BRadioButton*	fPresetDefault;			// 0x32/0x33, latch 0x01
-	BRadioButton*	fPresetAlternate;		// 0x64/0x67, latch 0x10
+	BRadioButton*	fPresetDefault;			// 0x64/0x67, latch 0x10
+	BRadioButton*	fPresetAlternate;		// 0x32/0x33, latch 0x01
 	Player*			fPlayer;
 	Tuner*			fTuner;
 
@@ -75,6 +82,11 @@ private:
 	uint8			fSweepSavedHigh;		// layout to restore if it fails
 	uint8			fSweepSavedLow;
 	uint8			fSweepSavedLatch;
+
+	// The tuner diagnostic borrows the USB tuner; in capture mode it gets
+	// one of its own. Nothing else may touch the tuner while it is open.
+	BMessenger		fDiagnostic;
+	UsbTuner*		fDiagnosticTuner;
 };
 
 #endif

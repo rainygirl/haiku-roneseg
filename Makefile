@@ -6,6 +6,7 @@ APP_MIME_SIG = application/x-vnd.ROneSeg
 SRCS = \
 	src/main.cpp \
 	src/MainWindow.cpp \
+	src/DiagnosticWindow.cpp \
 	src/VideoView.cpp \
 	src/Player.cpp \
 	src/TunerAdapterIO.cpp \
@@ -13,6 +14,7 @@ SRCS = \
 	src/AribText.cpp \
 	src/ChannelTable.cpp \
 	src/FileTuner.cpp \
+	src/TunerDiagnostic.cpp \
 	src/UsbTuner.cpp
 
 RDEFS = src/app.rdef
