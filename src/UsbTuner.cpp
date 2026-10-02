@@ -1200,6 +1200,34 @@ UsbTuner::Read(void* buffer, size_t size)
 
 
 bool
+UsbTuner::MeasureSignal(float* _dB, int32 samples)
+{
+	const float kMaxGain = 150.0f;		// 0x96
+	const float kSetPoint = 175.0f;
+	const float kStepDB = 0.3f;
+
+	float gain = 0, level = 0;
+	int32 count = 0;
+	for (int32 i = 0; i < samples; i++) {
+		uint8 r[3];
+		if (!ReadRegisters(kDemod, 0x0f, r, 3))
+			continue;
+		gain += r[0];
+		level += r[2];
+		count++;
+	}
+	if (count == 0)
+		return false;
+	gain /= count;
+	level /= count;
+	if (level < 1)
+		level = 1;
+	*_dB = (kMaxGain - gain) * kStepDB + 20.0f * log10f(level / kSetPoint);
+	return true;
+}
+
+
+bool
 UsbTuner::HasSignal(uint64 frequencyHz, bigtime_t timeout)
 {
 	fDiagnostic = Diagnostic();
@@ -1207,6 +1235,7 @@ UsbTuner::HasSignal(uint64 frequencyHz, bigtime_t timeout)
 		return false;
 	fDiagnostic.tuned = true;
 	fDiagnostic.lock = WaitForLock(1500000);
+	fDiagnostic.measured = MeasureSignal(&fDiagnostic.strength);
 	if (fDiagnostic.lock != kLocked)
 		return false;
 

@@ -98,6 +98,13 @@ public:
 	};
 	LockState WaitForLock(bigtime_t timeout);
 
+	// Signal strength of the tuned channel in dB above the weakest input the
+	// demodulator's AGC can still bring to its set-point. Register 0x0f is
+	// the AGC gain (0x96 = maximum, about 0.3 dB a step) and 0x11 the level
+	// after it. With no broadcast this reads 0-3 dB - the machine's own noise
+	// reaching the antenna - and a receivable channel stands well above that.
+	bool MeasureSignal(float* _dB, int32 samples = 30);
+
 	// What the last HasSignal()/Read attempt saw, for the diagnostic log:
 	// whether the demodulator locked, how many bytes came off the data
 	// endpoint and whether they framed as TS.
@@ -106,8 +113,10 @@ public:
 		bool		sync;		// TS sync bytes found
 		bool		tuned;		// the tune write itself succeeded
 		LockState	lock;
+		bool		measured;	// strength is valid
+		float		strength;	// dB, see MeasureSignal()
 		Diagnostic() : bytes(0), sync(false), tuned(false),
-			lock(kLockUnknown) {}
+			lock(kLockUnknown), measured(false), strength(0) {}
 	};
 	Diagnostic LastDiagnostic() const { return fDiagnostic; }
 

@@ -41,6 +41,25 @@ static const uint32 kMsgSettings = 'Setg';
 static const uint32 kMsgApplySettings = 'AplS';
 static const uint32 kMsgQuit = 'Quit';
 static const uint32 kMsgDiagnose = 'Diag';
+static const uint32 kMsgMeter = 'Metr';
+static const uint32 kMsgMeterNote = 'MtrN';
+static const uint32 kMsgMeterDone = 'MtrD';
+
+
+// "+1.3 dB  ||||" - one bar per dB, so a channel that is coming in is
+// obvious at a glance.
+static BString
+StrengthText(float dB)
+{
+	BString text;
+	text.SetToFormat("%+.1f dB  ", dB);
+	int bars = (int)(dB + 0.5f);
+	if (bars > 30)
+		bars = 30;
+	for (int i = 0; i < bars; i++)
+		text << "|";
+	return text;
+}
 
 
 MainWindow::MainWindow(const std::string& capturePath)
@@ -68,6 +87,7 @@ MainWindow::MainWindow(const std::string& capturePath)
 	fScanCancel(false),
 	fQuitPending(false),
 	fScanFirstHit(-1),
+	fMeterRunning(false),
 	fSweepChannel(-1),
 	fSweepSavedHigh(0),
 	fSweepSavedLow(0),
@@ -246,6 +266,9 @@ MainWindow::BuildMenu()
 	// layout against the selected channel and keeps the one that receives.
 	file->AddItem(new BMenuItem("周波数レジスタ候補スイープ",
 		new BMessage(kMsgSweep)));
+	// Retunes the selected channel over and over and shows how strong it is,
+	// for finding a place (or an antenna position) where it comes in.
+	file->AddItem(new BMenuItem("信号メーター", new BMessage(kMsgMeter), 'M'));
 	file->AddItem(new BMenuItem("設定" B_UTF8_ELLIPSIS,
 		new BMessage(kMsgSettings)));
 	// Checks the internal module stage by stage without needing a broadcast:
@@ -275,6 +298,8 @@ MainWindow::TuneToSelection()
 
 	if (DiagnosticBusy())
 		return;
+	if (fScanThread >= 0)
+		return;					// the scan or the meter holds the tuner
 
 	const ChannelTable::Channel& channel = fChannels[selected];
 
@@ -291,6 +316,20 @@ MainWindow::TuneToSelection()
 	status = fTuner->Tune(channel.frequencyHz);
 	if (status != B_OK) {
 		SetStatusText("could not tune " + channel.Label());
+		return;
+	}
+
+	// Only start reading once the demodulator has locked: a bulk read on a
+	// channel that is not there never completes and wedges the module.
+	UsbTuner* usb = dynamic_cast<UsbTuner*>(fTuner);
+	if (usb != NULL && usb->WaitForLock(1500000) != UsbTuner::kLocked) {
+		BString log;
+		log << "UHF " << channel.physical << ": ロックなし";
+		float strength = 0;
+		if (usb->MeasureSignal(&strength))
+			log << "  強度 " << StrengthText(strength);
+		SetStatusText(std::string(log.String()));
+		fVideoView->SetPlaceholder("no signal");
 		return;
 	}
 
@@ -371,6 +410,9 @@ MainWindow::ScanEntry(void* self)
 		hit.AddBool("tuned", diag.tuned);
 		hit.AddBool("sync", diag.sync);
 		hit.AddInt64("bytes", (int64)diag.bytes);
+		hit.AddBool("locked", diag.lock == UsbTuner::kLocked);
+		if (diag.measured)
+			hit.AddFloat("strength", diag.strength);
 		messenger.SendMessage(&hit);
 	}
 	messenger.SendMessage(new BMessage(kMsgScanDone));
@@ -482,9 +524,94 @@ MainWindow::SweepEntry(void* self)
 
 
 void
+MainWindow::ToggleMeter()
+{
+	if (fScanThread >= 0) {
+		// Choosing it again stops it; a scan or a sweep is left alone.
+		if (fMeterRunning)
+			fScanCancel = true;
+		return;
+	}
+	if (DiagnosticBusy())
+		return;
+
+	fPlayer->Stop();
+
+	UsbTuner* usb = dynamic_cast<UsbTuner*>(fTuner);
+	int32 selected = fChannelList->CurrentSelection();
+	if (usb == NULL || selected < 0) {
+		SetStatusText("信号メーターはUSBチューナーでチャンネルを選んでから");
+		return;
+	}
+
+	status_t status = fTuner->Open();
+	if (status != B_OK) {
+		std::string detail = fTuner->LastError();
+		SetStatusText(detail.empty() ? "could not open the tuner" : detail);
+		return;
+	}
+
+	fSweepChannel = selected;
+	fScanCancel = false;
+	fMeterRunning = true;
+	SetStatusText("信号メーター - " + fChannels[selected].Label());
+	fScanThread = spawn_thread(MeterEntry, "roneseg meter", B_LOW_PRIORITY,
+		this);
+	if (fScanThread < 0) {
+		fScanThread = -1;
+		fMeterRunning = false;
+		SetStatusText("could not start the meter");
+		return;
+	}
+	resume_thread(fScanThread);
+
+	if (fScanButton != NULL) {
+		fScanButton->SetEnabled(false);
+		fScanButton->SetLabel("信号メーター中...");
+	}
+}
+
+
+// Retunes the one channel until it locks or the meter is stopped: the
+// demodulator gives up on a channel it cannot find and has to be asked again,
+// and each attempt is also a fresh strength reading.
+status_t
+MainWindow::MeterEntry(void* self)
+{
+	MainWindow* window = (MainWindow*)self;
+	UsbTuner* usb = dynamic_cast<UsbTuner*>(window->fTuner);
+	if (usb == NULL)
+		return B_ERROR;
+
+	uint64 frequency = window->fChannels[window->fSweepChannel].frequencyHz;
+	BMessenger messenger(window);
+	bool received = false;
+	while (!window->fScanCancel && !received) {
+		received = usb->HasSignal(frequency);
+		UsbTuner::Diagnostic diag = usb->LastDiagnostic();
+
+		BMessage note(kMsgMeterNote);
+		note.AddBool("locked", diag.lock == UsbTuner::kLocked);
+		note.AddBool("received", received);
+		if (diag.measured)
+			note.AddFloat("strength", diag.strength);
+		messenger.SendMessage(&note);
+		if (!diag.tuned)
+			snooze(500000);
+	}
+
+	BMessage done(kMsgMeterDone);
+	done.AddBool("received", received);
+	messenger.SendMessage(&done);
+	return B_OK;
+}
+
+
+void
 MainWindow::FinishScanUi()
 {
 	fScanThread = -1;
+	fMeterRunning = false;
 	if (fScanButton != NULL) {
 		fScanButton->SetEnabled(true);
 		fScanButton->SetLabel("チャンネルスキャン");
@@ -674,6 +801,10 @@ MainWindow::MessageReceived(BMessage* message)
 			break;
 
 		case kMsgStop:
+			if (fMeterRunning) {
+				fScanCancel = true;
+				break;
+			}
 			fPlayer->Stop();
 			SetStatusText("stopped");
 			break;
@@ -685,6 +816,46 @@ MainWindow::MessageReceived(BMessage* message)
 		case kMsgScan:
 			StartScan();
 			break;
+
+		case kMsgMeter:
+			ToggleMeter();
+			break;
+
+		case kMsgMeterNote:
+		{
+			bool locked = false, received = false;
+			float strength = 0;
+			message->FindBool("locked", &locked);
+			message->FindBool("received", &received);
+			bool measured = message->FindFloat("strength", &strength) == B_OK;
+
+			BString log;
+			log << "UHF " << fChannels[fSweepChannel].physical << "  ";
+			if (measured)
+				log << "強度 " << StrengthText(strength) << "  ";
+			log << (received ? "受信" : locked ? "ロック" : "ロックなし");
+			if (!received)
+				log << "  (もう一度メニューで停止)";
+			SetStatusText(std::string(log.String()));
+			break;
+		}
+
+		case kMsgMeterDone:
+		{
+			bool received = false;
+			message->FindBool("received", &received);
+			FinishScanUi();
+			if (fQuitPending) {
+				PostMessage(B_QUIT_REQUESTED);
+				break;
+			}
+			if (received) {
+				fChannelList->Select(fSweepChannel);
+				PostMessage(kMsgTune);
+			} else
+				SetStatusText("信号メーター停止");
+			break;
+		}
 
 		case kMsgSweep:
 			StartSweep();
@@ -712,12 +883,15 @@ MainWindow::MessageReceived(BMessage* message)
 			if (message->FindInt32("index", &index) != B_OK)
 				break;
 
-			bool signal = false, tuned = false, sync = false;
+			bool signal = false, tuned = false, sync = false, locked = false;
 			int64 bytes = 0;
+			float strength = 0;
 			message->FindBool("signal", &signal);
 			message->FindBool("tuned", &tuned);
 			message->FindBool("sync", &sync);
+			message->FindBool("locked", &locked);
 			message->FindInt64("bytes", &bytes);
+			bool measured = message->FindFloat("strength", &strength) == B_OK;
 
 			int physical = fChannels[index].physical;
 
@@ -730,13 +904,30 @@ MainWindow::MessageReceived(BMessage* message)
 			log << "UHF " << physical << ": ";
 			if (!tuned)
 				log << "tune failed";
+			else if (!locked)
+				log << "ロックなし";
 			else if (bytes <= 0)
-				log << "no data (0 bytes) - not locked or stream not started";
+				log << "ロックしたがデータなし";
 			else if (!sync)
-				log << bytes << " bytes, no TS sync - check freq register (設定)";
+				log << bytes << " bytes, no TS sync";
 			else
 				log << bytes << " bytes, TS sync - receiving";
+			if (measured)
+				log << "  強度 " << StrengthText(strength);
 			SetStatusText(std::string(log.String()));
+
+			// Every scanned channel keeps its strength in the list, so the
+			// whole band can be read off after the scan.
+			if (measured) {
+				BStringItem* item
+					= dynamic_cast<BStringItem*>(fChannelList->ItemAt(index));
+				if (item != NULL) {
+					BString label(fChannels[index].Label().c_str());
+					label << "  " << StrengthText(strength);
+					item->SetText(label.String());
+					fChannelList->InvalidateItem(index);
+				}
+			}
 
 			if (signal) {
 				BStringItem* item

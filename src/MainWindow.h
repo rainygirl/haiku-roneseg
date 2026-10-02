@@ -43,6 +43,7 @@ private:
 	static uint8 HexByte(BTextControl* field, uint8 fallback);
 	void StartScan();
 	void StartSweep();
+	void ToggleMeter();
 	void ShowDiagnostic();
 	void CloseDiagnostic();
 	// True (and says so) while the diagnostic window holds the tuner.
@@ -52,6 +53,7 @@ private:
 
 	static status_t ScanEntry(void* self);
 	static status_t SweepEntry(void* self);
+	static status_t MeterEntry(void* self);
 
 	std::vector<ChannelTable::Channel>	fChannels;
 	std::string							fCapturePath;
@@ -78,7 +80,8 @@ private:
 	bool			fQuitPending;
 	int32			fScanFirstHit;
 
-	int32			fSweepChannel;			// list index the sweep tunes
+	bool			fMeterRunning;			// the worker is the signal meter
+	int32			fSweepChannel;			// list index the sweep or meter tunes
 	uint8			fSweepSavedHigh;		// layout to restore if it fails
 	uint8			fSweepSavedLow;
 	uint8			fSweepSavedLatch;
