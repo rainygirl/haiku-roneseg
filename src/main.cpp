@@ -75,22 +75,10 @@ ParseChannels(const char* spec)
 
 
 static int
-RunDiagnosis(const char* spec, const char* layout)
+RunDiagnosis(const char* spec)
 {
 	std::vector<int32> channels = ParseChannels(spec);
 	UsbTuner tuner;
-	tuner.LoadSettings();
-	// Optional frequency-word layout "HH,LL,LATCH" in hex, to compare the
-	// candidates without touching the saved settings.
-	unsigned high, low, latch;
-	if (layout != NULL
-		&& sscanf(layout, "%x,%x,%x", &high, &low, &latch) == 3) {
-		tuner.SetFrequencyRegisters((uint8)high, (uint8)low);
-		tuner.SetLatchValue((uint8)latch);
-	}
-	printf("frequency word: 0x%02x/0x%02x, latch 0x%02x\n",
-		tuner.FrequencyRegister(), tuner.FrequencyRegisterLow(),
-		tuner.LatchValue());
 	TunerDiagnostic diagnostic(&tuner, PrintLine, NULL);
 	bool ok = diagnostic.Run(channels, NULL);
 	tuner.Close();
@@ -110,9 +98,7 @@ PrintUsage(const char* binary)
 		"                   tuner, with its descriptors, and exit. Run this\n"
 		"                   first on a machine whose tuner is unidentified.\n"
 		"  --diagnose [CH]  Check the internal tuner stage by stage and print\n"
-		"                   a report. CH is e.g. 13-52 (default) or 20,27.\n"
-		"                   An optional HH,LL,LATCH (hex) overrides the\n"
-		"                   frequency-word layout for this run only.\n",
+		"                   a report. CH is e.g. 13-52 (default) or 20,27.\n",
 		binary);
 }
 
@@ -133,8 +119,7 @@ main(int argc, char** argv)
 			// Headless tuner check; see TunerDiagnostic.h. Optional channel
 			// list: "13-52" (default) or "20,27,33".
 			const char* spec = i + 1 < argc ? argv[i + 1] : "13-52";
-			const char* layout = i + 2 < argc ? argv[i + 2] : NULL;
-			return RunDiagnosis(spec, layout);
+			return RunDiagnosis(spec);
 		}
 		if (strcmp(argv[i], "--play") == 0 && i + 1 < argc) {
 			capturePath = argv[++i];

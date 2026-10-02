@@ -90,11 +90,6 @@ DiagnosticWindow::RunEntry(void* cookie)
 			c++) {
 		channels.push_back(c);
 	}
-	char layout[96];
-	snprintf(layout, sizeof(layout), "frequency word: 0x%02x/0x%02x, latch 0x%02x",
-		window->fTuner->FrequencyRegister(),
-		window->fTuner->FrequencyRegisterLow(), window->fTuner->LatchValue());
-	Line(layout, window);
 	TunerDiagnostic diagnostic(window->fTuner, Line, window);
 	diagnostic.Run(channels, &window->fCancel);
 	if (!window->fCancel) {

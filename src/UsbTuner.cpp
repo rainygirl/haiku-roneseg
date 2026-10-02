@@ -1,12 +1,7 @@
 #include "UsbTuner.h"
 
 #include <Autolock.h>
-#include <Directory.h>
-#include <File.h>
-#include <FindDirectory.h>
-#include <Message.h>
 #include <OS.h>
-#include <Path.h>
 
 #include <math.h>
 #include <stdio.h>
@@ -133,41 +128,6 @@ const size_t kDemodProgramSize = 988;
 const uint16 kDemodProgramBase = 0x5000;
 
 
-// Where the frequency word might land, best-supported first. The first two are
-// the two readings of DtvCore.dll (see AGENTS.md §6.4); the rest are their near
-// neighbours - the registers the demodulator init table deliberately leaves at
-// zero, paired both ways, with each latch value that appears in the vendor
-// code. Short on purpose: this runs against one channel at a time, and a list
-// long enough to be "thorough" would be too slow to sit through.
-const UsbTuner::TuningCandidate kTuningCandidates[] = {
-	{ 0x64, 0x67, 0x10 },		// the default: DtvCore.dll 0x100905f7, and the
-								// only layout the chip takes in (diagnostic)
-	{ 0x32, 0x33, 0x01 },		// the former default
-	{ 0x64, 0x67, 0x01 },
-	{ 0x32, 0x33, 0x10 },
-	{ 0x64, 0x65, 0x01 },
-	{ 0x66, 0x67, 0x01 },
-	{ 0x34, 0x35, 0x01 },
-};
-
-
-// ~/config/settings/roneseg/settings, where the frequency-word layout is kept.
-// The same directory the firmware image lives in.
-status_t
-SettingsPath(BPath* path, bool createDirectory)
-{
-	status_t status = find_directory(B_USER_SETTINGS_DIRECTORY, path);
-	if (status != B_OK)
-		return status;
-	status = path->Append("roneseg");
-	if (status != B_OK)
-		return status;
-	if (createDirectory)
-		create_directory(path->Path(), 0755);
-	return path->Append("settings");
-}
-
-
 // Where the firmware image and the demodulator program are looked for, in
 // order. Shared by the loaders and the USB report, so the report cannot claim
 // a file the loader would not find - the whole point of printing it.
@@ -202,11 +162,6 @@ FindFirmwareFile(const std::string& preferred)
 {
 	return FindDataFile("oneseg_fw.rec", preferred);
 }
-
-
-const char* kSettingHigh = "frequency register high";
-const char* kSettingLow = "frequency register low";
-const char* kSettingLatch = "latch value";
 
 
 std::string
@@ -352,14 +307,7 @@ UsbTuner::UsbTuner()
 	fStatusEndpoint(NULL),
 	fProfile(NULL),
 	fReady(false),
-	fFrequency(0),
-	// 0x64/0x67 with latch 0x10: the only layout the demodulator was seen
-	// to take in (register 0x10 then holds V's high byte on every channel -
-	// see the tuner diagnostic in AGENTS.md). Until 2026-09 this was
-	// 0x32/0x33 latch 0x01, which the chip ignored.
-	fFrequencyReg(0x64),
-	fFrequencyRegLow(0x67),
-	fLatchValue(0x10)
+	fFrequency(0)
 {
 }
 
@@ -380,74 +328,6 @@ UsbTuner::ProfileFor(uint16 vendor, uint16 product)
 		}
 	}
 	return NULL;
-}
-
-
-status_t
-UsbTuner::LoadSettings()
-{
-	BPath path;
-	status_t status = SettingsPath(&path, false);
-	if (status != B_OK)
-		return status;
-
-	BFile file(path.Path(), B_READ_ONLY);
-	status = file.InitCheck();
-	if (status != B_OK)
-		return status;			// no settings yet: the defaults stand
-
-	BMessage settings;
-	status = settings.Unflatten(&file);
-	if (status != B_OK)
-		return status;
-
-	// Each value is taken only if it is there and in range, so a truncated or
-	// hand-edited file degrades to the compiled-in defaults rather than
-	// putting the tuner somewhere impossible.
-	int32 value;
-	if (settings.FindInt32(kSettingHigh, &value) == B_OK
-		&& value >= 0 && value <= 0xFF) {
-		fFrequencyReg = (uint8)value;
-	}
-	if (settings.FindInt32(kSettingLow, &value) == B_OK
-		&& value >= 0 && value <= 0xFF) {
-		fFrequencyRegLow = (uint8)value;
-	}
-	if (settings.FindInt32(kSettingLatch, &value) == B_OK
-		&& value >= 0 && value <= 0xFF) {
-		fLatchValue = (uint8)value;
-	}
-	return B_OK;
-}
-
-
-status_t
-UsbTuner::SaveSettings() const
-{
-	BPath path;
-	status_t status = SettingsPath(&path, true);
-	if (status != B_OK)
-		return status;
-
-	BMessage settings;
-	settings.AddInt32(kSettingHigh, fFrequencyReg);
-	settings.AddInt32(kSettingLow, fFrequencyRegLow);
-	settings.AddInt32(kSettingLatch, fLatchValue);
-
-	BFile file(path.Path(), B_CREATE_FILE | B_ERASE_FILE | B_WRITE_ONLY);
-	status = file.InitCheck();
-	if (status != B_OK)
-		return status;
-	return settings.Flatten(&file);
-}
-
-
-const UsbTuner::TuningCandidate*
-UsbTuner::TuningCandidates(size_t* count)
-{
-	if (count != NULL)
-		*count = sizeof(kTuningCandidates) / sizeof(kTuningCandidates[0]);
-	return kTuningCandidates;
 }
 
 
@@ -1209,6 +1089,17 @@ UsbTuner::MeasureSignal(float* _dB, int32 samples)
 	const float kMaxGain = 150.0f;		// 0x96
 	const float kSetPoint = 175.0f;
 	const float kStepDB = 0.3f;
+
+	// Right after bring-up the AGC starts from the bottom of its range and
+	// takes a few hundred milliseconds to come up; until then the level reads
+	// far below the set-point and the result is meaningless.
+	for (int32 i = 0; i < 10; i++) {
+		uint8 r[3];
+		if (ReadRegisters(kDemod, 0x0f, r, 3)
+			&& (r[2] >= kSetPoint / 2 || r[0] < kMaxGain))
+			break;
+		snooze(50000);
+	}
 
 	float gain = 0, level = 0;
 	int32 count = 0;

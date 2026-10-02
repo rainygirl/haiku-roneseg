@@ -12,9 +12,7 @@
 class BButton;
 class BListView;
 class BMenuBar;
-class BRadioButton;
 class BStringView;
-class BTextControl;
 class BWindow;
 class Player;
 class Tuner;
@@ -38,11 +36,7 @@ private:
 	void BuildMenu();
 	void TuneToSelection();
 	void ShowUsbReport();
-	void ShowSettings();
-	void ApplySettings(BMessage* message);
-	static uint8 HexByte(BTextControl* field, uint8 fallback);
 	void StartScan();
-	void StartSweep();
 	void ToggleMeter();
 	void ShowDiagnostic();
 	void CloseDiagnostic();
@@ -52,7 +46,6 @@ private:
 	void SetStatusText(const std::string& text);
 
 	static status_t ScanEntry(void* self);
-	static status_t SweepEntry(void* self);
 	static status_t MeterEntry(void* self);
 
 	std::vector<ChannelTable::Channel>	fChannels;
@@ -63,16 +56,10 @@ private:
 	BButton*		fScanButton;
 	VideoView*		fVideoView;
 	BStringView*	fStatusView;
-	BWindow*		fSettingsPanel;
-	BTextControl*	fSettingsField;			// frequency register, high byte
-	BTextControl*	fSettingsLowField;		// frequency register, low byte
-	BTextControl*	fSettingsLatchField;	// value pulsed into demod 0x42
-	BRadioButton*	fPresetDefault;			// 0x64/0x67, latch 0x10
-	BRadioButton*	fPresetAlternate;		// 0x32/0x33, latch 0x01
 	Player*			fPlayer;
 	Tuner*			fTuner;
 
-	// The scan and the candidate sweep are the same kind of job - one thread
+	// The scan and the signal meter are the same kind of job - one thread
 	// holding the tuner, cancellable, quit deferred until it stops - so they
 	// share this state and only one can run at a time.
 	thread_id		fScanThread;
@@ -81,10 +68,7 @@ private:
 	int32			fScanFirstHit;
 
 	bool			fMeterRunning;			// the worker is the signal meter
-	int32			fSweepChannel;			// list index the sweep or meter tunes
-	uint8			fSweepSavedHigh;		// layout to restore if it fails
-	uint8			fSweepSavedLow;
-	uint8			fSweepSavedLatch;
+	int32			fMeterChannel;			// list index the meter tunes
 
 	// The tuner diagnostic borrows the USB tuner; in capture mode it gets
 	// one of its own. Nothing else may touch the tuner while it is open.

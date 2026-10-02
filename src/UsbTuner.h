@@ -130,37 +130,6 @@ public:
 	bool PokeRegister(uint8 sub, uint8 reg, uint8 value)
 		{ return WriteRegister(sub, reg, value); }
 
-	// A leftover from before the vendor sequence was recovered: where a
-	// "frequency word" was written in the demodulator (0x64/0x67 latch 0x10,
-	// or 0x32/0x33 latch 0x01). Tune() no longer uses any of it - a channel
-	// is the RF tuner's PLL word - but the settings panel, the sweep and the
-	// diagnostic still carry the values around.
-	void SetFrequencyRegisters(uint8 high, uint8 low)
-		{ fFrequencyReg = high; fFrequencyRegLow = low; }
-	void SetLatchValue(uint8 value) { fLatchValue = value; }
-	uint8 FrequencyRegister() const { return fFrequencyReg; }
-	uint8 FrequencyRegisterLow() const { return fFrequencyRegLow; }
-	uint8 LatchValue() const { return fLatchValue; }
-
-	// The frequency-word layout, persisted to
-	// ~/config/settings/roneseg/settings. Once a sweep has found the layout
-	// that receives, it has to survive a restart - a field answer that has to
-	// be re-derived on every launch is not an answer. Saving is explicit
-	// rather than a side effect of the setters, because a sweep runs through
-	// every candidate and must not write the losing ones to disk.
-	status_t LoadSettings();
-	status_t SaveSettings() const;
-
-	// One layout the frequency word might use. The sweep walks these against a
-	// channel known to be on air and keeps whichever one produces a transport
-	// stream - which is the only way this question gets answered.
-	struct TuningCandidate {
-		uint8		high;
-		uint8		low;
-		uint8		latch;
-	};
-	static const TuningCandidate* TuningCandidates(size_t* count);
-
 	// Enumerates every USB device on the machine and describes the ones that
 	// could plausibly be a tuner. Safe to call without Open(); this is the
 	// first thing to run on a machine whose tuner has never been identified.
@@ -212,9 +181,6 @@ private:
 	std::string				fFirmwarePath;
 	bool					fReady;
 	uint64					fFrequency;
-	uint8					fFrequencyReg;		// high byte of V
-	uint8					fFrequencyRegLow;	// low byte of V
-	uint8					fLatchValue;		// pulsed into demod 0x42
 	Diagnostic				fDiagnostic;
 };
 
