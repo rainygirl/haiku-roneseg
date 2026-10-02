@@ -1143,8 +1143,12 @@ UsbTuner::WaitForLock(bigtime_t timeout)
 		uint8 status[3];
 		if (!ReadRegisters(kDemod, 0x00, status, 3))
 			return kLockError;
-		if ((status[0] & 0x02) != 0 && (status[2] & 0x08) != 0)
+		if ((status[0] & 0x02) != 0 && (status[2] & 0x08) != 0) {
+			// DtvCore resets the FIFOs on a lock, so the stream starts on
+			// the new channel's first packets.
+			ControlTimed(kVendorOut, kFifoReset, 0, 0, 0, NULL, 1000000);
 			return kLocked;
+		}
 		if ((status[0] & 0x08) != 0)
 			return kNoSignal;
 		if (system_time() >= deadline)
