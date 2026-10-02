@@ -130,3 +130,22 @@ u8  data[16]  ペイロード (使うのは length バイトだけ)
 
 **壊す心配はありません。** ファームウェアは内部 RAM に載るだけで、フラッシュには
 書きません。電源を落とせば空のブートローダに戻ります。
+
+## 復調器のプログラム — `oneseg_demod.bin`
+
+ファームウェアとは別に、**復調器 (I2C `0x6E`) も起動のたびに 988 バイトの
+プログラムをホストから受け取ります**。これが無いと復調器はバスには応答しますが、
+どのチャンネルにもロックしません。0.1.0-5 以降の `ROneSeg` はこのファイルが
+無いと選局を始めず、その旨を表示します。
+
+これもソニーのコードなので同梱していません。「VAIO モバイル TV」の
+`DtvCore.dll` (リカバリディスク 1 のモジュール `MODJ-134152`、InstallShield の
+`data1.cab` の中) から取り出します:
+
+```
+python3 recovery/extract_demod.py DtvCore.dll ~/config/settings/roneseg/oneseg_demod.bin
+python3 recovery/extract_demod.py --check ~/config/settings/roneseg/oneseg_demod.bin
+```
+
+抽出器は SHA-256 で中身を照合するので、`OK` と出れば正しいプログラムです。
+置き場所は `oneseg_fw.rec` と同じ順で探します。

@@ -27,10 +27,10 @@
 // as "CXD9192 Controller" and streams. The upload is to RAM, so a power cycle
 // returns it to the blank state.
 //
-// Open() then runs the fixed bring-up (demodulator + RF front end), Tune()
-// programs the frequency, and Read() pulls the transport stream. The scanner
-// (HasSignal) tests a channel by whether TS packets actually arrive, so it does
-// not depend on identifying the demodulator's lock register.
+// Open() then runs the bring-up DtvCore.dll performs - the demodulator's DSP
+// program (oneseg_demod.bin), its registers, and the RF tuner behind its I2C
+// repeater - Tune() programs the tuner's PLL for a UHF channel, WaitForLock()
+// reads the demodulator's verdict, and Read() pulls the transport stream.
 class UsbTuner : public Tuner {
 public:
 	// One entry per supported chip. The internal module is opened by identity
@@ -89,13 +89,25 @@ public:
 	// case is about two minutes, and the scan is cancellable between channels.
 	bool HasSignal(uint64 frequencyHz, bigtime_t timeout = 1500000);
 
-	// What the last HasSignal()/Read attempt saw, for the diagnostic log: how
-	// many bytes came off the data endpoint and whether they framed as TS.
+	// The demodulator's verdict after a tune (see WaitForLock).
+	enum LockState {
+		kLockUnknown,
+		kLocked,
+		kNoSignal,
+		kLockError		// its status registers could not be read
+	};
+	LockState WaitForLock(bigtime_t timeout);
+
+	// What the last HasSignal()/Read attempt saw, for the diagnostic log:
+	// whether the demodulator locked, how many bytes came off the data
+	// endpoint and whether they framed as TS.
 	struct Diagnostic {
-		ssize_t	bytes;		// bytes read, 0 = nothing arrived, <0 = error
-		bool	sync;		// TS sync bytes found
-		bool	tuned;		// the tune write itself succeeded
-		Diagnostic() : bytes(0), sync(false), tuned(false) {}
+		ssize_t		bytes;		// bytes read, 0 = nothing arrived, <0 = error
+		bool		sync;		// TS sync bytes found
+		bool		tuned;		// the tune write itself succeeded
+		LockState	lock;
+		Diagnostic() : bytes(0), sync(false), tuned(false),
+			lock(kLockUnknown) {}
 	};
 	Diagnostic LastDiagnostic() const { return fDiagnostic; }
 
@@ -109,25 +121,11 @@ public:
 	bool PokeRegister(uint8 sub, uint8 reg, uint8 value)
 		{ return WriteRegister(sub, reg, value); }
 
-	// Where the frequency word goes: two demodulator registers taking the high
-	// and low bytes of V = 7 x f_MHz, and the value pulsed into the 0x42 latch
-	// around them.
-	//
-	// None of the three could be confirmed against a live signal, and the two
-	// readings of DtvCore.dll disagree, so all three are adjustable rather than
-	// compiled in. The two candidates worth trying in the field:
-	//
-	//   0x64 / 0x67, latch 0x10   the default - what the caller-side
-	//                             disassembly at DtvCore.dll 0x100905f7 spells
-	//                             out, registers NOT adjacent (see
-	//                             recovery/docs/tuning-progress.md); the only
-	//                             layout the chip was seen to take in
-	//   0x32 / 0x33, latch 0x01   the former default - the demodulator init
-	//                             table leaves 0x32-0x35 at zero, and the
-	//                             tuning orchestrator writes there
-	//
-	// The second cannot be expressed by a single base register, which is why
-	// the low register is set separately rather than being high + 1.
+	// A leftover from before the vendor sequence was recovered: where a
+	// "frequency word" was written in the demodulator (0x64/0x67 latch 0x10,
+	// or 0x32/0x33 latch 0x01). Tune() no longer uses any of it - a channel
+	// is the RF tuner's PLL word - but the settings panel, the sweep and the
+	// diagnostic still carry the values around.
 	void SetFrequencyRegisters(uint8 high, uint8 low)
 		{ fFrequencyReg = high; fFrequencyRegLow = low; }
 	void SetLatchValue(uint8 value) { fLatchValue = value; }
@@ -175,6 +173,15 @@ private:
 	status_t				ClaimEndpoints();
 	std::string				LocateFirmware() const;
 	bool					WriteRegister(uint8 sub, uint8 reg, uint8 value);
+	bool					WriteBlock(uint8 sub, uint8 reg, const uint8* data,
+								uint8 count);
+	bool					WriteTable(uint8 sub, const uint8 (*table)[2],
+								size_t count);
+	bool					WriteTuner(const uint8* stream, size_t size);
+	status_t				LoadDemodProgram(std::vector<uint8>* program);
+	bool					SerialRead(uint8 reg, uint16* value);
+	bool					SerialWrite(uint8 reg, uint16 value);
+	status_t				StartStreamPath();
 	// A control transfer with a deadline. BUSBDevice::ControlTransfer has none
 	// of its own, so a wedged device would hang the caller forever - which is
 	// exactly what froze a scan and stopped the app from quitting. Everything

@@ -594,8 +594,13 @@ MainWindow::ShowSettings()
 	fPresetAlternate = presetAlternate;
 	cancel->SetTarget(panel);
 
+	// The field belongs to the panel's looper, not this one: focusing it from
+	// here without the panel's lock is a "Looper must be locked" debugger stop.
 	panel->Show();
-	field->MakeFocus(true);
+	if (panel->Lock()) {
+		field->MakeFocus(true);
+		panel->Unlock();
+	}
 }
 
 

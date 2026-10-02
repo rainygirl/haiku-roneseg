@@ -22,17 +22,17 @@
 //   * Vendor requests: 0x20 writes a register (wIndex = (sub<<8)|reg,
 //     wValue = value byte), 0x23 sets the mode, 0x27 resets the FIFOs. The
 //     firmware relays register access, so the host writes every register value.
-//   * Bring-up is two fixed sequences: the demodulator (sub 0x6E) and the RF
-//     front end (sub 0x6C table + sub 0x60 tuner). Neither depends on channel.
-//   * A channel is the frequency word V = 7 x f_MHz, written to demod 0x64/0x67
-//     and latched with a 0x42 = 0x10 pulse. If a signal is present and no channel
-//     locks, this select register is the first thing to adjust - see Tune().
+//   * Bring-up is the sequence Sony's DtvCore.dll performs for this module:
+//     the demodulator (0x6E) takes a DSP program and a register table, and
+//     the RF tuner behind its I2C repeater (0x63) an init stream.
+//   * A channel is the tuner's PLL word, 0x7644 for UHF 13 and 0x180 more per
+//     channel - see Tune().
 //
-// The exact lock register is not identified; the scanner does not need it. It
-// asks the only question that matters - "are TS packets coming out on this
-// channel" - by reading the data endpoint and looking for sync bytes. Once a
-// stream flows, the rest of the app (demux, SI, decode) needs nothing from
-// here: it scans, names channels from the SDT, and plays.
+// The demodulator reports its own verdict (WaitForLock): register 0x00 bit 1
+// with 0x02 bit 3 is a lock, 0x00 bit 3 means it gave up. The scanner only
+// reads the data endpoint once that says locked. Register 0x0f is the AGC
+// gain (0x96 = maximum) and the one to watch for signal strength; 0x11 is
+// the level after the AGC and reads the same whatever the input.
 
 namespace {
 
@@ -50,17 +50,36 @@ const uint8 kVendorIn = 0xC0;
 const uint8 kRegisterRead = 0x21;
 const uint8 kRegisterWrite = 0x20;
 const uint8 kSetMode = 0x23;
+const uint8 kSerialWrite = 0x2C;		// 3-wire bus on port 0: 8-bit address,
+const uint8 kSerialRead = 0x2B;		// 16-bit data, LSB first on the wire
 const uint8 kFifoReset = 0x27;
 
-// I2C sub-devices behind the bridge.
+// I2C devices behind the bridge (7-bit addresses).
 const uint8 kDemod = 0x6E;
-const uint8 kFront = 0x6C;
-const uint8 kTuner = 0x60;
+const uint8 kPage2 = 0x6C;
 
-// Demodulator init: a reset/latch pulse then a 35-register configuration to
-// sub-device 0x6E. It leaves registers 0x32-0x35 at zero - the frequency word.
-const uint8 kDemodLatch[][2] = {
-	{ 0x42, 0x01 }, { 0x42, 0x00 }, { 0x41, 0x01 },
+// Everything below is the sequence Sony's own DtvCore.dll sends for this
+// module - "tuner type 3", which DtvCore picks when EEPROM byte 0x18 reads 2 -
+// recovered by running that code under an x86 emulator and logging every
+// vendor request it issued (AGENTS.md §6). Values are (register, value) pairs.
+//
+// Bus layout: 0x6E is the demodulator, 0x6C its second register page, and the
+// RF tuner sits behind the demodulator's I2C repeater at 0x63, reachable only
+// while demodulator register 0x42 holds 0x10.
+
+// Demodulator, before its DSP program is loaded.
+const uint8 kDemodPreload[][2] = {
+	{ 0x42, 0x01 }, { 0x42, 0x00 }, { 0x41, 0x01 }, { 0x42, 0x04 },
+	{ 0xf9, 0x1c },
+};
+// After the program: start it, pulse the core, then a few patch words.
+const uint8 kDemodStart[][2] = {
+	{ 0xf9, 0x11 }, { 0xf9, 0x10 }, { 0x42, 0x00 },
+};
+const uint8 kDemodPatch[][2] = {
+	{ 0x42, 0x04 }, { 0xf9, 0x90 }, { 0x6e, 0x6f }, { 0x6f, 0x00 },
+	{ 0x75, 0x55 }, { 0x76, 0x7d }, { 0x77, 0x00 }, { 0xf9, 0x10 },
+	{ 0x42, 0x00 }, { 0x54, 0x10 },
 };
 const uint8 kDemodInit[][2] = {
 	{ 0x32, 0x00 }, { 0x33, 0x00 }, { 0x34, 0x00 }, { 0x35, 0x00 }, { 0x40, 0x00 },
@@ -71,20 +90,47 @@ const uint8 kDemodInit[][2] = {
 	{ 0x5d, 0x40 }, { 0x5e, 0x90 }, { 0x5f, 0xff }, { 0x60, 0x00 }, { 0x62, 0x20 },
 	{ 0x64, 0x00 }, { 0x65, 0x10 }, { 0x66, 0x00 }, { 0x67, 0x00 }, { 0x68, 0x83 },
 };
-// RF front-end init: a table to sub-device 0x6C and the tuner IC program to
-// sub-device 0x60. Fixed - none of it depends on the channel.
-const uint8 kFront6C[][2] = {
-	{ 0x00, 0x20 }, { 0x4a, 0x2a }, { 0x84, 0x07 }, { 0x1b, 0x73 }, { 0x1c, 0x95 },
-	{ 0x0b, 0x00 }, { 0x0c, 0x31 }, { 0x0d, 0x35 }, { 0x98, 0x80 }, { 0xdf, 0x01 },
-	{ 0x05, 0x18 }, { 0x08, 0x32 }, { 0x61, 0x80 }, { 0x3c, 0x10 }, { 0x3d, 0x80 },
-	{ 0xf2, 0x01 }, { 0xf4, 0x0a }, { 0xe7, 0x02 },
+// The demodulator's second page, once at bring-up.
+const uint8 kPage6C[][2] = {
+	{ 0x00, 0x20 }, { 0x92, 0x00 }, { 0x98, 0x80 }, { 0x99, 0x02 },
+	{ 0xdf, 0x01 }, { 0xf5, 0x10 },
 };
-const uint8 kTuner60[][2] = {
-	{ 0xa0, 0x54 }, { 0xa1, 0x02 }, { 0xa2, 0x67 }, { 0xa3, 0x00 }, { 0xa4, 0x06 },
-	{ 0xa5, 0x3b }, { 0xa6, 0x00 }, { 0xa7, 0x56 }, { 0xa8, 0x00 }, { 0xa9, 0x5b },
-	{ 0xaa, 0x02 }, { 0xab, 0x6e }, { 0xac, 0x02 }, { 0xad, 0x0b }, { 0xae, 0x01 },
-	{ 0xaf, 0x42 }, { 0xb0, 0x01 }, { 0xb1, 0x0b }, { 0xb2, 0x00 }, { 0xb5, 0x00 },
+
+// The RF tuner takes one I2C write of (register, value) pairs ended by 0xFE.
+// Its bring-up, which also tunes UHF 13:
+const uint8 kTunerInit[] = {
+	0x0a, 0xfd, 0x0c, 0x49, 0x0d, 0x86, 0x0f, 0xf0, 0x14, 0xc0, 0x15, 0xc0,
+	0x1a, 0xd6, 0x1b, 0x1c, 0x1c, 0xca, 0x1d, 0x01, 0x1e, 0xfc, 0x24, 0x40,
+	0x28, 0xf9, 0x29, 0x33, 0x32, 0x02, 0x3c, 0x44, 0x45, 0x3f, 0x6b, 0x00,
+	0x66, 0x0f, 0x0e, 0x00, 0x33, 0x76, 0x34, 0x44, 0x35, 0x92, 0x36, 0x49,
+	0x09, 0xf0, 0xfe,
 };
+// Per channel. Bytes 13 and 15 are the PLL word, 0x7644 for UHF 13 and
+// 0x180 more per 6 MHz channel - 1/64 MHz steps.
+const uint8 kTunerChannel[] = {
+	0x0d, 0x86, 0x1a, 0xd6, 0x1e, 0xfc, 0x24, 0x40, 0x6b, 0x00, 0x0e, 0x00,
+	0x33, 0x00, 0x34, 0x00, 0x35, 0x92, 0x36, 0x49, 0xfe,
+};
+const size_t kTunerChannelHigh = 13;
+const size_t kTunerChannelLow = 15;
+// Around the channel write: hold the tuner, then release it.
+const uint8 kTunerHold[] = { 0x09, 0xf0, 0xfe };
+const uint8 kTunerRun[] = { 0x09, 0xf4, 0xfe };
+
+// wIndexH 0x7F reaches the firmware's own settings block instead of the bus:
+// 0x08 selects the antenna input, 0x09 a second switch, and writing 1 to 0x0B
+// pulses the reset line of the chip on the 3-wire bus.
+const uint8 kFirmwareSettings = 0x7F;
+
+const uint8 kTunerAddress = 0x63;
+const uint8 kRepeaterOpen = 0x10;		// demodulator 0x42
+
+// The demodulator's DSP program: 988 bytes, written 16 at a time through a
+// window - 0x6E/0x6F take the address (0x5000 up), 0x70 the data. It is
+// Sony's code and is not in this repository; recovery/extract_demod.py pulls
+// it out of the owner's own DtvCore.dll.
+const size_t kDemodProgramSize = 988;
+const uint16 kDemodProgramBase = 0x5000;
 
 
 // Where the frequency word might land, best-supported first. The first two are
@@ -122,31 +168,39 @@ SettingsPath(BPath* path, bool createDirectory)
 }
 
 
-// Where a firmware image is looked for, in order. Shared by LocateFirmware()
-// and the USB report, so the report cannot claim a file the loader would not
-// find - the whole point of printing it.
+// Where the firmware image and the demodulator program are looked for, in
+// order. Shared by the loaders and the USB report, so the report cannot claim
+// a file the loader would not find - the whole point of printing it.
 std::string
-FindFirmwareFile(const std::string& preferred)
+FindDataFile(const char* name, const std::string& preferred)
 {
-	const char* candidates[] = {
-		NULL,		// filled from `preferred` below
-		"/boot/home/config/settings/roneseg/oneseg_fw.rec",
-		"/boot/home/config/non-packaged/data/roneseg/oneseg_fw.rec",
-		"/boot/home/fwtool/oneseg_fw.rec",
-		"oneseg_fw.rec",
+	const char* directories[] = {
+		"/boot/home/config/settings/roneseg/",
+		"/boot/home/config/non-packaged/data/roneseg/",
+		"/boot/home/fwtool/",
+		"",
 	};
-	candidates[0] = preferred.empty() ? NULL : preferred.c_str();
+	std::vector<std::string> candidates;
+	if (!preferred.empty())
+		candidates.push_back(preferred);
+	for (size_t i = 0; i < sizeof(directories) / sizeof(directories[0]); i++)
+		candidates.push_back(std::string(directories[i]) + name);
 
-	for (size_t i = 0; i < sizeof(candidates) / sizeof(candidates[0]); i++) {
-		if (candidates[i] == NULL)
-			continue;
-		FILE* file = fopen(candidates[i], "rb");
+	for (size_t i = 0; i < candidates.size(); i++) {
+		FILE* file = fopen(candidates[i].c_str(), "rb");
 		if (file != NULL) {
 			fclose(file);
-			return std::string(candidates[i]);
+			return candidates[i];
 		}
 	}
 	return std::string();
+}
+
+
+std::string
+FindFirmwareFile(const std::string& preferred)
+{
+	return FindDataFile("oneseg_fw.rec", preferred);
 }
 
 
@@ -811,28 +865,155 @@ UsbTuner::ReadRegisters(uint8 sub, uint8 base, uint8* out, uint8 count)
 }
 
 
+bool
+UsbTuner::WriteBlock(uint8 sub, uint8 reg, const uint8* data, uint8 count)
+{
+	// wValue = byte count; the data stage carries them, and the firmware puts
+	// the register and all of them on the bus as one I2C write.
+	return ControlTimed(kVendorOut, kRegisterWrite, count,
+		(uint16)((sub << 8) | reg), count, (void*)data, 1000000)
+		== (ssize_t)count;
+}
+
+
+bool
+UsbTuner::WriteTable(uint8 sub, const uint8 (*table)[2], size_t count)
+{
+	for (size_t i = 0; i < count; i++) {
+		if (!WriteRegister(sub, table[i][0], table[i][1]))
+			return false;
+	}
+	return true;
+}
+
+
+// The tuner stream is (register, value) pairs, so its first byte is the
+// register the I2C write starts at and the rest goes as data.
+bool
+UsbTuner::WriteTuner(const uint8* stream, size_t size)
+{
+	return WriteBlock(kTunerAddress, stream[0], stream + 1, (uint8)(size - 1));
+}
+
+
+status_t
+UsbTuner::LoadDemodProgram(std::vector<uint8>* program)
+{
+	std::string path = FindDataFile("oneseg_demod.bin", std::string());
+	if (path.empty()) {
+		SetLastError("the demodulator needs its program: put oneseg_demod.bin "
+			"in ~/config/settings/roneseg/ (extract it from DtvCore.dll with "
+			"recovery/extract_demod.py - see FIRMWARE.md)");
+		return B_ENTRY_NOT_FOUND;
+	}
+	FILE* file = fopen(path.c_str(), "rb");
+	if (file == NULL)
+		return B_IO_ERROR;
+	program->resize(kDemodProgramSize + 1);
+	size_t got = fread(&(*program)[0], 1, program->size(), file);
+	fclose(file);
+	if (got != kDemodProgramSize) {
+		SetLastError("oneseg_demod.bin is not the 988-byte demodulator program");
+		return B_BAD_DATA;
+	}
+	program->resize(kDemodProgramSize);
+	return B_OK;
+}
+
+
+bool
+UsbTuner::SerialRead(uint8 reg, uint16* value)
+{
+	uint8 data[2];
+	if (ControlTimed(kVendorIn, kSerialRead, 0, reg, 2, data, 1000000) != 2)
+		return false;
+	*value = data[0] | (data[1] << 8);
+	return true;
+}
+
+
+bool
+UsbTuner::SerialWrite(uint8 reg, uint16 value)
+{
+	uint8 data[2] = { (uint8)(value & 0xff), (uint8)(value >> 8) };
+	return ControlTimed(kVendorOut, kSerialWrite, 2, reg, 2, data, 1000000)
+		== 2;
+}
+
+
+// The chip on the 3-wire bus sits in the transport-stream path (DtvCore
+// calls it "Leira"). Reset it, wait for its ready bit, and switch the stream
+// through - DtvCore's 0x10091c00.
+status_t
+UsbTuner::StartStreamPath()
+{
+	if (!WriteRegister(kFirmwareSettings, 0x0b, 0x01))
+		return B_IO_ERROR;
+	uint16 value = 0;
+	bigtime_t deadline = system_time() + 1000000;
+	while (!SerialRead(0x2c, &value) || (value & 0x0002) == 0) {
+		if (system_time() >= deadline) {
+			SetLastError("the stream path chip did not come out of reset");
+			return B_TIMED_OUT;
+		}
+		snooze(1000);
+	}
+	uint16 control = 0, enable = 0;
+	if (!SerialWrite(0x1a, 0x0000) || !SerialWrite(0x1a, 0x8000)
+		|| !SerialRead(0x22, &control) || !SerialWrite(0x22, control | 0x0100)
+		|| !SerialRead(0x24, &enable) || !SerialWrite(0x24, enable | 0x0001))
+		return B_IO_ERROR;
+	return B_OK;
+}
+
+
 status_t
 UsbTuner::BringUp()
 {
+	std::vector<uint8> program;
+	status_t status = LoadDemodProgram(&program);
+	if (status != B_OK)
+		return status;
+
 	if (ControlTimed(kVendorOut, kSetMode, 1, 0, 0, NULL, 1000000) < 0)
 		return B_DEVICE_NOT_FOUND;
 
-	for (size_t i = 0; i < sizeof(kDemodLatch) / 2; i++) {
-		if (!WriteRegister(kDemod, kDemodLatch[i][0], kDemodLatch[i][1]))
+	status = StartStreamPath();
+	if (status != B_OK)
+		return status;
+	if (!WriteRegister(kFirmwareSettings, 0x09, 0x00)
+		|| !WriteRegister(kFirmwareSettings, 0x08, 0x00))
+		return B_IO_ERROR;
+
+	if (!WriteTable(kDemod, kDemodPreload,
+			sizeof(kDemodPreload) / sizeof(kDemodPreload[0])))
+		return B_IO_ERROR;
+	for (size_t offset = 0; offset < program.size(); offset += 16) {
+		uint16 address = kDemodProgramBase + offset;
+		size_t chunk = program.size() - offset < 16
+			? program.size() - offset : 16;
+		if (!WriteRegister(kDemod, 0x6e, address >> 8)
+			|| !WriteRegister(kDemod, 0x6f, address & 0xff)
+			|| !WriteBlock(kDemod, 0x70, &program[offset], chunk))
 			return B_IO_ERROR;
 	}
-	for (size_t i = 0; i < sizeof(kDemodInit) / 2; i++) {
-		if (!WriteRegister(kDemod, kDemodInit[i][0], kDemodInit[i][1]))
-			return B_IO_ERROR;
-	}
-	for (size_t i = 0; i < sizeof(kFront6C) / 2; i++) {
-		if (!WriteRegister(kFront, kFront6C[i][0], kFront6C[i][1]))
-			return B_IO_ERROR;
-	}
-	for (size_t i = 0; i < sizeof(kTuner60) / 2; i++) {
-		if (!WriteRegister(kTuner, kTuner60[i][0], kTuner60[i][1]))
-			return B_IO_ERROR;
-	}
+	if (!WriteTable(kDemod, kDemodStart,
+			sizeof(kDemodStart) / sizeof(kDemodStart[0])))
+		return B_IO_ERROR;
+	snooze(5000);
+	if (!WriteTable(kDemod, kDemodPatch,
+			sizeof(kDemodPatch) / sizeof(kDemodPatch[0]))
+		|| !WriteTable(kDemod, kDemodInit,
+			sizeof(kDemodInit) / sizeof(kDemodInit[0])))
+		return B_IO_ERROR;
+
+	if (!WriteRegister(kDemod, 0x42, kRepeaterOpen)
+		|| !WriteTuner(kTunerInit, sizeof(kTunerInit))
+		|| !WriteRegister(kDemod, 0x42, 0x00))
+		return B_IO_ERROR;
+
+	if (!WriteTable(kPage2, kPage6C, sizeof(kPage6C) / sizeof(kPage6C[0])))
+		return B_IO_ERROR;
 	return B_OK;
 }
 
@@ -908,28 +1089,68 @@ UsbTuner::Tune(uint64 frequencyHz)
 			return status;
 	}
 
-	// V = 7 x f_MHz, the exact ISDB-T raster integer.
-	double mhz = (double)frequencyHz / 1000000.0;
-	int v = (int)lround(7.0 * mhz);
+	// Japan's UHF raster: channel 13 at 473 + 1/7 MHz, 6 MHz apart.
+	int channel = (int)lround(((double)frequencyHz / 1000000.0
+		- (473.0 + 1.0 / 7.0)) / 6.0) + 13;
+	if (channel < 13 || channel > 62) {
+		SetLastError("not a Japanese UHF channel (13-62)");
+		return B_BAD_VALUE;
+	}
 
-	// Frequency word, then the 0x42 latch pulse. Both registers and the latch
-	// value are configurable (default 0x64/0x67, latch 0x10 - the registers
-	// are not adjacent, which is why the low one is not assumed to be the high
-	// one plus one); if a signal is present and nothing locks, this is the
-	// first thing to adjust, the other reading being 0x32/0x33 latch 0x01.
-	if (!WriteRegister(kDemod, fFrequencyReg, (uint8)(v >> 8))
-		|| !WriteRegister(kDemod, fFrequencyRegLow, (uint8)(v & 0xFF))) {
-		SetLastError("could not write the frequency");
+	uint8 stream[sizeof(kTunerChannel)];
+	memcpy(stream, kTunerChannel, sizeof(stream));
+	uint16 word = 0x7644 + 0x180 * (channel - 13);
+	stream[kTunerChannelHigh] = word >> 8;
+	stream[kTunerChannelLow] = word & 0xff;
+
+	// Hold the demodulator (0x41 bit 0) while the tuner moves, open the
+	// repeater, retune, close it, let the PLL settle, release.
+	uint8 control = 0;
+	if (!ReadRegisters(kDemod, 0x41, &control, 1)
+		|| !WriteRegister(kDemod, 0x41, control | 0x01)
+		|| !WriteRegister(kDemod, 0x42, kRepeaterOpen)
+		|| !WriteTuner(kTunerHold, sizeof(kTunerHold))
+		|| !WriteTuner(stream, sizeof(stream))
+		|| !WriteTuner(kTunerRun, sizeof(kTunerRun))
+		|| !WriteRegister(kDemod, 0x42, 0x00)) {
+		SetLastError("could not program the tuner");
 		return B_IO_ERROR;
 	}
-	WriteRegister(kDemod, 0x42, fLatchValue);
-	WriteRegister(kDemod, 0x42, 0x00);
+	snooze(100000);
 
-	// Restart the FIFOs so the stream begins cleanly on the new channel.
-	ControlTimed(kVendorOut, kFifoReset, 0, 0, 0, NULL, 1000000);
+	if (!WriteRegister(kDemod, 0x4b, 0x16)
+		|| !ReadRegisters(kDemod, 0x41, &control, 1)
+		|| !WriteRegister(kDemod, 0x41, control & ~0x01)
+		|| !WriteRegister(kPage2, 0x04, 0x02)
+		|| !WriteRegister(kPage2, 0xf2, 0x01)) {
+		SetLastError("could not restart the demodulator");
+		return B_IO_ERROR;
+	}
 
 	fFrequency = frequencyHz;
 	return B_OK;
+}
+
+
+// DtvCore's own test: register 0x00 bit 1 together with 0x02 bit 3 is a
+// lock; 0x00 bit 3 on its own is the demodulator giving up. Polled every
+// 100 ms for up to 1.5 s, as DtvCore does.
+UsbTuner::LockState
+UsbTuner::WaitForLock(bigtime_t timeout)
+{
+	bigtime_t deadline = system_time() + timeout;
+	while (true) {
+		uint8 status[3];
+		if (!ReadRegisters(kDemod, 0x00, status, 3))
+			return kLockError;
+		if ((status[0] & 0x02) != 0 && (status[2] & 0x08) != 0)
+			return kLocked;
+		if ((status[0] & 0x08) != 0)
+			return kNoSignal;
+		if (system_time() >= deadline)
+			return kNoSignal;
+		snooze(100000);
+	}
 }
 
 
@@ -939,6 +1160,10 @@ UsbTuner::BulkRead(void* buffer, size_t size, bigtime_t timeout)
 	const BUSBEndpoint* endpoint = fStreamEndpoint;
 	if (endpoint == NULL)
 		return B_NO_INIT;
+	// A zero-length bulk transfer panics Haiku's EHCI driver (no descriptor
+	// is built and FillQueueWithData dereferences it).
+	if (size == 0)
+		return 0;
 
 	BulkJob job;
 	job.endpoint = endpoint;
@@ -981,16 +1206,17 @@ UsbTuner::HasSignal(uint64 frequencyHz, bigtime_t timeout)
 	if (Tune(frequencyHz) != B_OK)
 		return false;
 	fDiagnostic.tuned = true;
-	snooze(500000);					// let the demod acquire and the FIFO fill
+	fDiagnostic.lock = WaitForLock(1500000);
+	if (fDiagnostic.lock != kLocked)
+		return false;
 
 	const size_t kSize = 16384;
 	uint8* buffer = (uint8*)malloc(kSize);
 	if (buffer == NULL)
 		return false;
 
-	// One read per channel: a channel with no stream never answers, and each
-	// unanswered bulk transfer costs time, so keep the scan quick and
-	// responsive to cancellation by asking once.
+	// Only read once the demodulator says it has locked: a bulk read with
+	// nothing to deliver leaves later control requests stuck (AGENTS.md).
 	ssize_t got = BulkRead(buffer, kSize, timeout);
 	bool stream = got > 0 && LooksLikeTransportStream(buffer, got);
 	fDiagnostic.bytes = got;
