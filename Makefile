@@ -14,6 +14,7 @@ SRCS = \
 	src/AribText.cpp \
 	src/ChannelTable.cpp \
 	src/FileTuner.cpp \
+	src/Localize.cpp \
 	src/TunerDiagnostic.cpp \
 	src/UsbTuner.cpp
 

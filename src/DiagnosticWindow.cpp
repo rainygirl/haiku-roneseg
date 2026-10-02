@@ -14,6 +14,7 @@
 #include <stdio.h>
 
 #include "ChannelTable.h"
+#include "Localize.h"
 #include "TunerDiagnostic.h"
 #include "UsbTuner.h"
 
@@ -28,7 +29,7 @@ const uint32 kMsgClose = 'dCls';
 
 DiagnosticWindow::DiagnosticWindow(BRect frame, UsbTuner* tuner)
 	:
-	BWindow(frame, "チューナー診断", B_TITLED_WINDOW,
+	BWindow(frame, Tr("チューナー診断", "Tuner diagnostic"), B_TITLED_WINDOW,
 		B_ASYNCHRONOUS_CONTROLS | B_AUTO_UPDATE_SIZE_LIMITS),
 	fTuner(tuner),
 	fText(NULL),
@@ -44,7 +45,8 @@ DiagnosticWindow::DiagnosticWindow(BRect frame, UsbTuner* tuner)
 	BScrollView* scroller = new BScrollView("scroller", fText, 0, true, true);
 	scroller->SetExplicitMinSize(BSize(560, 360));
 
-	fCloseButton = new BButton("close", "閉じる", new BMessage(kMsgClose));
+	fCloseButton = new BButton("close", Tr("閉じる", "Close"),
+		new BMessage(kMsgClose));
 
 	BLayoutBuilder::Group<>(this, B_VERTICAL, B_USE_SMALL_SPACING)
 		.SetInsets(B_USE_SMALL_SPACING)

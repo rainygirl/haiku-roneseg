@@ -19,6 +19,7 @@
 #include <new>
 
 #include "DiagnosticWindow.h"
+#include "Localize.h"
 #include "FileTuner.h"
 #include "Player.h"
 #include "TunerAdapterIO.h"
@@ -124,7 +125,8 @@ MainWindow::DiagnosticBusy()
 {
 	if (!fDiagnostic.IsValid())
 		return false;
-	SetStatusText("チューナー診断中 - 診断ウィンドウを閉じてください");
+	SetStatusText(Tr("チューナー診断中 - 診断ウィンドウを閉じてください",
+		"Tuner diagnostic running - close its window first"));
 	return true;
 }
 
@@ -143,7 +145,7 @@ MainWindow::ShowDiagnostic()
 		return;
 	}
 	if (fScanThread >= 0) {
-		SetStatusText("スキャン中は診断できません");
+		SetStatusText(Tr("スキャン中は診断できません", "Cannot diagnose while scanning"));
 		return;
 	}
 
@@ -169,7 +171,7 @@ MainWindow::ShowDiagnostic()
 		return;
 	fDiagnostic = BMessenger(window);
 	window->Show();
-	SetStatusText("チューナー診断を実行中...");
+	SetStatusText(Tr("チューナー診断を実行中...", "Running the tuner diagnostic..."));
 }
 
 
@@ -192,7 +194,8 @@ MainWindow::BuildLayout()
 
 	// The scan button does the same thing as Alt-S, for a machine whose
 	// pointing stick is easier to reach than its keyboard corner.
-	fScanButton = new BButton("scan", "チャンネルスキャン", new BMessage(kMsgScan));
+	fScanButton = new BButton("scan", Tr("チャンネルスキャン", "Channel scan"),
+		new BMessage(kMsgScan));
 
 	fVideoView = new VideoView();
 	fVideoView->SetExplicitMinSize(BSize(320, 240));
@@ -236,21 +239,25 @@ MainWindow::BuildLayout()
 void
 MainWindow::BuildMenu()
 {
-	// A single "ファイル" (File) menu: scan, settings, quit - in Japanese, since
-	// this receives Japanese broadcast and its users read the channel names.
+	// A single File menu: scan, meter, diagnostic, quit. Japanese when the
+	// system language is Japanese, English otherwise (Localize.h).
 	fMenuBar = new BMenuBar("menubar");
-	BMenu* file = new BMenu("ファイル");
-	file->AddItem(new BMenuItem("スキャン", new BMessage(kMsgScan), 'S'));
+	BMenu* file = new BMenu(Tr("ファイル", "File"));
+	file->AddItem(new BMenuItem(Tr("スキャン", "Scan"), new BMessage(kMsgScan),
+		'S'));
 	// Retunes the selected channel over and over and shows how strong it is,
 	// for finding a place (or an antenna position) where it comes in.
-	file->AddItem(new BMenuItem("信号メーター", new BMessage(kMsgMeter), 'M'));
+	file->AddItem(new BMenuItem(Tr("信号メーター", "Signal meter"),
+		new BMessage(kMsgMeter), 'M'));
 	// Checks the internal module stage by stage without needing a broadcast:
 	// USB, firmware, register bus, demodulator, then every channel's lock
 	// and signal strength.
-	file->AddItem(new BMenuItem("チューナー診断" B_UTF8_ELLIPSIS,
+	BString diagnose(Tr("チューナー診断", "Tuner diagnostic"));
+	diagnose << B_UTF8_ELLIPSIS;
+	file->AddItem(new BMenuItem(diagnose.String(),
 		new BMessage(kMsgDiagnose)));
 	file->AddSeparatorItem();
-	file->AddItem(new BMenuItem("終了", new BMessage(kMsgQuit), 'Q'));
+	file->AddItem(new BMenuItem(Tr("終了", "Quit"), new BMessage(kMsgQuit), 'Q'));
 	fMenuBar->AddItem(file);
 }
 
@@ -298,10 +305,10 @@ MainWindow::TuneToSelection()
 	UsbTuner* usb = dynamic_cast<UsbTuner*>(fTuner);
 	if (usb != NULL && usb->WaitForLock(1500000) != UsbTuner::kLocked) {
 		BString log;
-		log << "UHF " << channel.physical << ": ロックなし";
+		log << "UHF " << channel.physical << Tr(": ロックなし", ": no lock");
 		float strength = 0;
 		if (usb->MeasureSignal(&strength))
-			log << "  強度 " << StrengthText(strength);
+			log << Tr("  強度 ", "  strength ") << StrengthText(strength);
 		SetStatusText(std::string(log.String()));
 		fVideoView->SetPlaceholder("no signal");
 		return;
@@ -358,7 +365,7 @@ MainWindow::StartScan()
 
 	if (fScanButton != NULL) {
 		fScanButton->SetEnabled(false);
-		fScanButton->SetLabel("スキャン中...");
+		fScanButton->SetLabel(Tr("スキャン中...", "Scanning..."));
 	}
 }
 
@@ -411,7 +418,8 @@ MainWindow::ToggleMeter()
 	UsbTuner* usb = dynamic_cast<UsbTuner*>(fTuner);
 	int32 selected = fChannelList->CurrentSelection();
 	if (usb == NULL || selected < 0) {
-		SetStatusText("信号メーターはUSBチューナーでチャンネルを選んでから");
+		SetStatusText(Tr("信号メーターはUSBチューナーでチャンネルを選んでから",
+			"Select a channel on the USB tuner to use the signal meter"));
 		return;
 	}
 
@@ -425,7 +433,7 @@ MainWindow::ToggleMeter()
 	fMeterChannel = selected;
 	fScanCancel = false;
 	fMeterRunning = true;
-	SetStatusText("信号メーター - " + fChannels[selected].Label());
+	SetStatusText(Tr("信号メーター - ", "Signal meter - ") + fChannels[selected].Label());
 	fScanThread = spawn_thread(MeterEntry, "roneseg meter", B_LOW_PRIORITY,
 		this);
 	if (fScanThread < 0) {
@@ -438,7 +446,7 @@ MainWindow::ToggleMeter()
 
 	if (fScanButton != NULL) {
 		fScanButton->SetEnabled(false);
-		fScanButton->SetLabel("信号メーター中...");
+		fScanButton->SetLabel(Tr("信号メーター中...", "Metering..."));
 	}
 }
 
@@ -485,7 +493,7 @@ MainWindow::FinishScanUi()
 	fMeterRunning = false;
 	if (fScanButton != NULL) {
 		fScanButton->SetEnabled(true);
-		fScanButton->SetLabel("チャンネルスキャン");
+		fScanButton->SetLabel(Tr("チャンネルスキャン", "Channel scan"));
 	}
 }
 
@@ -540,10 +548,11 @@ MainWindow::MessageReceived(BMessage* message)
 			BString log;
 			log << "UHF " << fChannels[fMeterChannel].physical << "  ";
 			if (measured)
-				log << "強度 " << StrengthText(strength) << "  ";
-			log << (received ? "受信" : locked ? "ロック" : "ロックなし");
+				log << Tr("強度 ", "strength ") << StrengthText(strength) << "  ";
+			log << (received ? Tr("受信", "receiving")
+				: locked ? Tr("ロック", "locked") : Tr("ロックなし", "no lock"));
 			if (!received)
-				log << "  (もう一度メニューで停止)";
+				log << Tr("  (もう一度メニューで停止)", "  (choose it again to stop)");
 			SetStatusText(std::string(log.String()));
 			break;
 		}
@@ -561,7 +570,7 @@ MainWindow::MessageReceived(BMessage* message)
 				fChannelList->Select(fMeterChannel);
 				PostMessage(kMsgTune);
 			} else
-				SetStatusText("信号メーター停止");
+				SetStatusText(Tr("信号メーター停止", "Signal meter stopped"));
 			break;
 		}
 
@@ -601,15 +610,15 @@ MainWindow::MessageReceived(BMessage* message)
 			if (!tuned)
 				log << "tune failed";
 			else if (!locked)
-				log << "ロックなし";
+				log << Tr("ロックなし", "no lock");
 			else if (bytes <= 0)
-				log << "ロックしたがデータなし";
+				log << Tr("ロックしたがデータなし", "locked, but no data");
 			else if (!sync)
 				log << bytes << " bytes, no TS sync";
 			else
 				log << bytes << " bytes, TS sync - receiving";
 			if (measured)
-				log << "  強度 " << StrengthText(strength);
+				log << Tr("  強度 ", "  strength ") << StrengthText(strength);
 			SetStatusText(std::string(log.String()));
 
 			// Every scanned channel keeps its strength in the list, so the
