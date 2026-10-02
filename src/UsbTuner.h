@@ -160,6 +160,7 @@ private:
 	bool					SerialRead(uint8 reg, uint16* value);
 	bool					SerialWrite(uint8 reg, uint16 value);
 	status_t				StartStreamPath();
+	bool					ReleaseDemod();
 	// A control transfer with a deadline. BUSBDevice::ControlTransfer has none
 	// of its own, so a wedged device would hang the caller forever - which is
 	// exactly what froze a scan and stopped the app from quitting. Everything

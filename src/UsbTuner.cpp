@@ -8,6 +8,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <new>
+
 // The One-Seg module, driven end to end from userland - no kernel driver, just
 // the USB Kit's control and bulk transfers.
 //
@@ -248,50 +250,87 @@ private:
 };
 
 
-// A bulk read on its own timed thread: a bulk transfer with nothing to deliver
-// never returns on its own, and a plain wait would hang the caller forever.
-struct BulkJob {
-	const BUSBEndpoint*	endpoint;
-	void*				buffer;
-	size_t				size;
+// Every transfer runs on a thread of its own with a deadline. Haiku's usb_raw
+// holds one lock per device for the whole of a transfer, so a bulk read with
+// nothing to deliver would otherwise hold up every later control request too.
+// On a timeout the thread is killed: usb_raw waits with B_KILL_CAN_INTERRUPT,
+// cancels the transfer when interrupted, and lets go of the lock.
+//
+// The job, and the data buffer the transfer writes into, live on the heap and
+// belong to the transfer thread until it has ended, so a late completion can
+// never write into a caller that has already returned.
+struct TransferJob {
+	BUSBDevice*			device;
+	const BUSBEndpoint*	endpoint;		// non-NULL: a bulk read
+	uint8				requestType;
+	uint8				request;
+	uint16				value;
+	uint16				index;
+	size_t				length;
+	uint8*				data;
 	ssize_t				result;
 	sem_id				done;
 };
 
 
 status_t
-BulkThread(void* cookie)
+TransferThread(void* cookie)
 {
-	BulkJob* job = (BulkJob*)cookie;
-	job->result = job->endpoint->BulkTransfer(job->buffer, job->size);
+	TransferJob* job = (TransferJob*)cookie;
+	if (job->endpoint != NULL)
+		job->result = job->endpoint->BulkTransfer(job->data, job->length);
+	else {
+		job->result = job->device->ControlTransfer(job->requestType,
+			job->request, job->value, job->index, job->length, job->data);
+	}
 	release_sem(job->done);
 	return B_OK;
 }
 
 
-// The same trick for control transfers: run it on a thread so a wedged device
-// costs a timeout rather than an unkillable hang.
-struct ControlJob {
-	BUSBDevice*	device;
-	uint8		requestType;
-	uint8		request;
-	uint16		value;
-	uint16		index;
-	uint16		length;
-	void*		buffer;
-	ssize_t		result;
-	sem_id		done;
-};
-
-
-status_t
-ControlThread(void* cookie)
+// Runs the job; returns its result, or B_TIMED_OUT. Frees the job unless its
+// thread could not be stopped, in which case it is leaked on purpose.
+ssize_t
+RunTransfer(TransferJob* job, void* out, bigtime_t timeout)
 {
-	ControlJob* job = (ControlJob*)cookie;
-	job->result = job->device->ControlTransfer(job->requestType, job->request,
-		job->value, job->index, job->length, job->buffer);
-	release_sem(job->done);
-	return B_OK;
+	job->result = 0;
+	job->done = create_sem(0, "roneseg transfer");
+	if (job->done < 0) {
+		free(job->data);
+		delete job;
+		return B_ERROR;
+	}
+	thread_id thread = spawn_thread(TransferThread, "roneseg transfer",
+		B_NORMAL_PRIORITY, job);
+	if (thread < 0) {
+		delete_sem(job->done);
+		free(job->data);
+		delete job;
+		return B_ERROR;
+	}
+	resume_thread(thread);
+
+	ssize_t result = B_TIMED_OUT;
+	if (acquire_sem_etc(job->done, 1, B_RELATIVE_TIMEOUT, timeout) == B_OK) {
+		result = job->result;
+		if (out != NULL && result > 0)
+			memcpy(out, job->data, result);
+	} else {
+		kill_thread(thread);
+		status_t ignored;
+		if (wait_for_thread_etc(thread, B_RELATIVE_TIMEOUT, 1000000, &ignored)
+				!= B_OK) {
+			// Still stuck in the kernel: it may yet write into the job.
+			delete_sem(job->done);
+			return B_TIMED_OUT;
+		}
+	}
+	status_t ignored;
+	wait_for_thread(thread, &ignored);
+	delete_sem(job->done);
+	free(job->data);
+	delete job;
+	return result;
 }
 
 } // namespace
@@ -691,38 +730,32 @@ ssize_t
 UsbTuner::ControlTimed(uint8 requestType, uint8 request, uint16 value,
 	uint16 index, uint16 length, void* buffer, bigtime_t timeout)
 {
-	uint8 scratch = 0;
-	ControlJob job;
+	TransferJob* job = new(std::nothrow) TransferJob;
+	if (job == NULL)
+		return B_NO_MEMORY;
 	{
 		BAutolock lock(&fDeviceLock);
-		if (fDevice == NULL)
+		if (fDevice == NULL) {
+			delete job;
 			return B_DEVICE_NOT_FOUND;
-		job.device = fDevice;
+		}
+		job->device = fDevice;
 	}
-	job.requestType = requestType;
-	job.request = request;
-	job.value = value;
-	job.index = index;
-	job.length = length;
-	job.buffer = buffer != NULL ? buffer : &scratch;
-	job.result = 0;
-	job.done = create_sem(0, "roneseg control");
-	if (job.done < 0)
-		return B_ERROR;
-
-	thread_id thread = spawn_thread(ControlThread, "roneseg control",
-		B_NORMAL_PRIORITY, &job);
-	if (thread < 0) {
-		delete_sem(job.done);
-		return B_ERROR;
+	job->endpoint = NULL;
+	job->requestType = requestType;
+	job->request = request;
+	job->value = value;
+	job->index = index;
+	job->length = length;
+	job->data = (uint8*)malloc(length > 0 ? length : 1);
+	if (job->data == NULL) {
+		delete job;
+		return B_NO_MEMORY;
 	}
-	resume_thread(thread);
-
-	status_t waited = acquire_sem_etc(job.done, 1, B_RELATIVE_TIMEOUT, timeout);
-	delete_sem(job.done);
-	if (waited != B_OK)
-		return B_TIMED_OUT;			// a wedged transfer, not an unkillable hang
-	return job.result;
+	bool in = (requestType & 0x80) != 0;
+	if (!in && buffer != NULL && length > 0)
+		memcpy(job->data, buffer, length);
+	return RunTransfer(job, in ? buffer : NULL, timeout);
 }
 
 
@@ -998,11 +1031,7 @@ UsbTuner::Tune(uint64 frequencyHz)
 	}
 	snooze(100000);
 
-	if (!WriteRegister(kDemod, 0x4b, 0x16)
-		|| !ReadRegisters(kDemod, 0x41, &control, 1)
-		|| !WriteRegister(kDemod, 0x41, control & ~0x01)
-		|| !WriteRegister(kPage2, 0x04, 0x02)
-		|| !WriteRegister(kPage2, 0xf2, 0x01)) {
+	if (!ReleaseDemod()) {
 		SetLastError("could not restart the demodulator");
 		return B_IO_ERROR;
 	}
@@ -1012,9 +1041,22 @@ UsbTuner::Tune(uint64 frequencyHz)
 }
 
 
+// Lets the demodulator start acquiring (DtvCore's sequence after a tune).
+bool
+UsbTuner::ReleaseDemod()
+{
+	uint8 control = 0;
+	return WriteRegister(kDemod, 0x4b, 0x16)
+		&& ReadRegisters(kDemod, 0x41, &control, 1)
+		&& WriteRegister(kDemod, 0x41, control & ~0x01)
+		&& WriteRegister(kPage2, 0x04, 0x02)
+		&& WriteRegister(kPage2, 0xf2, 0x01);
+}
+
+
 // DtvCore's own test: register 0x00 bit 1 together with 0x02 bit 3 is a
-// lock; 0x00 bit 3 on its own is the demodulator giving up. Polled every
-// 100 ms for up to 1.5 s, as DtvCore does.
+// lock; 0x00 bit 3 on its own is the demodulator giving up, and then it is
+// started again until the timeout. Polled every 100 ms, as DtvCore does.
 UsbTuner::LockState
 UsbTuner::WaitForLock(bigtime_t timeout)
 {
@@ -1029,10 +1071,21 @@ UsbTuner::WaitForLock(bigtime_t timeout)
 			ControlTimed(kVendorOut, kFifoReset, 0, 0, 0, NULL, 1000000);
 			return kLocked;
 		}
-		if ((status[0] & 0x08) != 0)
-			return kNoSignal;
 		if (system_time() >= deadline)
 			return kNoSignal;
+		if ((status[0] & 0x08) != 0) {
+			// The demodulator gives up within about 85 ms when it finds
+			// nothing - and also when the signal dips for a moment, or the
+			// AGC has not settled yet after bring-up. Hold it and let it
+			// try again for as long as the caller is willing to wait.
+			uint8 control = 0;
+			if (!ReadRegisters(kDemod, 0x41, &control, 1)
+				|| !WriteRegister(kDemod, 0x41, control | 0x01))
+				return kLockError;
+			snooze(10000);
+			if (!ReleaseDemod())
+				return kLockError;
+		}
 		snooze(100000);
 	}
 }
@@ -1049,28 +1102,21 @@ UsbTuner::BulkRead(void* buffer, size_t size, bigtime_t timeout)
 	if (size == 0)
 		return 0;
 
-	BulkJob job;
-	job.endpoint = endpoint;
-	job.buffer = buffer;
-	job.size = size;
-	job.result = 0;
-	job.done = create_sem(0, "roneseg bulk");
-	if (job.done < 0)
-		return B_ERROR;
-
-	thread_id thread = spawn_thread(BulkThread, "roneseg bulk",
-		B_NORMAL_PRIORITY, &job);
-	if (thread < 0) {
-		delete_sem(job.done);
-		return B_ERROR;
+	TransferJob* job = new(std::nothrow) TransferJob;
+	if (job == NULL)
+		return B_NO_MEMORY;
+	job->device = NULL;
+	job->endpoint = endpoint;
+	job->length = size;
+	job->data = (uint8*)malloc(size);
+	if (job->data == NULL) {
+		delete job;
+		return B_NO_MEMORY;
 	}
-	resume_thread(thread);
-
-	status_t waited = acquire_sem_etc(job.done, 1, B_RELATIVE_TIMEOUT, timeout);
-	delete_sem(job.done);
-	if (waited != B_OK)
-		return 0;					// timeout: no data, caller keeps going
-	return job.result;
+	ssize_t got = RunTransfer(job, buffer, timeout);
+	if (got == B_TIMED_OUT)
+		return 0;					// no data; the transfer was cancelled
+	return got;
 }
 
 

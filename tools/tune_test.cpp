@@ -13,6 +13,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <vector>
+
 
 static volatile bool sReading = false;
 static volatile size_t sReadBytes = 0;
@@ -69,10 +71,18 @@ main(int argc, char** argv)
 		resume_thread(reader);
 	}
 
+	// UNTIL=N: go round the list up to N times and stop on the first lock,
+	// leaving the tuner there - for a signal that comes and goes.
+	int rounds = getenv("UNTIL") != NULL ? atoi(getenv("UNTIL")) : 1;
+	std::vector<int> channels;
 	char* list = strdup(argv[1]);
 	for (char* token = strtok(list, ","); token != NULL;
-			token = strtok(NULL, ",")) {
-		int channel = atoi(token);
+			token = strtok(NULL, ","))
+		channels.push_back(atoi(token));
+	bool stopOnLock = getenv("UNTIL") != NULL;
+	bool locked = false;
+	for (size_t n = 0; n < channels.size() * rounds && !locked; n++) {
+		int channel = channels[n % channels.size()];
 		start = system_time();
 		status = tuner.Tune(ChannelHz(channel));
 		if (status != B_OK) {
@@ -81,6 +91,8 @@ main(int argc, char** argv)
 			continue;
 		}
 		UsbTuner::LockState lock = tuner.WaitForLock(1500000);
+		if (stopOnLock && lock == UsbTuner::kLocked)
+			locked = true;
 		uint8 regs[4] = { 0 };
 		tuner.ReadRegisters(0x6e, 0x00, regs, 4);
 		printf("UHF %d: %s  (00=%02x 02=%02x, %.2f s)\n", channel,

@@ -303,7 +303,7 @@ MainWindow::TuneToSelection()
 	// Only start reading once the demodulator has locked: a bulk read on a
 	// channel that is not there never completes and wedges the module.
 	UsbTuner* usb = dynamic_cast<UsbTuner*>(fTuner);
-	if (usb != NULL && usb->WaitForLock(1500000) != UsbTuner::kLocked) {
+	if (usb != NULL && usb->WaitForLock(6000000) != UsbTuner::kLocked) {
 		BString log;
 		log << "UHF " << channel.physical << Tr(": ロックなし", ": no lock");
 		float strength = 0;

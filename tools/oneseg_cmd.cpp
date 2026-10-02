@@ -80,6 +80,13 @@ Run(Job* job, bigtime_t timeout)
 		job);
 	resume_thread(thread);
 	status_t waited = acquire_sem_etc(job->done, 1, B_RELATIVE_TIMEOUT, timeout);
+	if (waited != B_OK) {
+		// usb_raw cancels a transfer whose thread is killed, which releases
+		// its per-device lock; the job is on our stack, so wait for the end.
+		kill_thread(thread);
+		status_t ignored;
+		wait_for_thread(thread, &ignored);
+	}
 	delete_sem(job->done);
 	return waited == B_OK ? job->result : B_TIMED_OUT;
 }
