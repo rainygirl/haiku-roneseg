@@ -82,7 +82,8 @@ Player::Player(const BMessenger& statusTarget, VideoView* videoView)
 	fVideoView(videoView),
 	fMutex("roneseg-player"),
 	fSession(NULL),
-	fGeneration(0)
+	fGeneration(0),
+	fVolume(1.0f)
 {
 }
 
@@ -93,11 +94,28 @@ Player::~Player()
 }
 
 
+void
+Player::SetVolume(float volume)
+{
+	BAutolock lock(fMutex);
+	fVolume = volume < 0 ? 0 : volume > 1 ? 1 : volume;
+	if (fSession != NULL && fSession->soundPlayer != NULL)
+		fSession->soundPlayer->SetVolume(fVolume);
+}
+
+
 bool
 Player::IsPlaying() const
 {
 	BAutolock lock(fMutex);
 	return fSession != NULL && fSession->soundPlayer != NULL;
+}
+
+bool
+Player::IsCurrentGeneration(uint64 generation) const
+{
+	BAutolock lock(fMutex);
+	return fSession != NULL && fSession->generation == generation;
 }
 
 
@@ -168,7 +186,7 @@ void
 Player::RunSetup(Session* session)
 {
 	session->io = new(std::nothrow) TunerAdapterIO(session->tuner,
-		fStatusTarget);
+		fStatusTarget, session->generation);
 	if (session->io == NULL) {
 		EmitStatus(kError, "out of memory");
 		return;
@@ -286,6 +304,8 @@ Player::RunSetup(Session* session)
 		if (session->audioThread >= 0)
 			resume_thread(session->audioThread);
 
+		// Publish the output under the same lock used by the volume control.
+		BAutolock volumeLock(fMutex);
 		session->soundPlayer = new(std::nothrow) BSoundPlayer(
 			&session->audioFormat, "R One-Seg", &Player::PlayBufferProc,
 			NULL, session);
@@ -296,7 +316,7 @@ Player::RunSetup(Session* session)
 			// player that runs perfectly and produces nothing audible -
 			// indistinguishable from a decode problem from the outside.
 			// R World Radio's RadioPlayer sets this for the same reason.
-			session->soundPlayer->SetVolume(1.0);
+			session->soundPlayer->SetVolume(fVolume);
 			session->soundPlayer->Start();
 			session->soundPlayer->SetHasData(true);
 		} else {
@@ -598,12 +618,17 @@ void
 Player::Teardown(Session* session)
 {
 	atomic_set(&session->stopRequested, 1);
+	session->tuner->CancelRead();
+	if (session->io != NULL) session->io->Stop();
 
-	if (session->soundPlayer != NULL) {
-		session->soundPlayer->SetHasData(false);
-		session->soundPlayer->Stop();
-		delete session->soundPlayer;
-		session->soundPlayer = NULL;
+	fMutex.Lock();
+	BSoundPlayer* soundPlayer = session->soundPlayer;
+	session->soundPlayer = NULL;
+	fMutex.Unlock();
+	if (soundPlayer != NULL) {
+		soundPlayer->SetHasData(false);
+		soundPlayer->Stop();
+		delete soundPlayer;
 	}
 
 	if (session->videoThread >= 0) {
@@ -645,7 +670,7 @@ Player::Teardown(Session* session)
 
 
 void
-Player::Stop()
+Player::Stop(bool notify)
 {
 	fMutex.Lock();
 	Session* session = fSession;
@@ -660,6 +685,7 @@ Player::Stop()
 	// BMediaFile probes the stream, and freeing underneath it is what turns
 	// a stop into a crash.
 	atomic_set(&session->stopRequested, 1);
+	session->tuner->CancelRead();
 	if (session->setupThread >= 0) {
 		status_t exitValue;
 		wait_for_thread(session->setupThread, &exitValue);
@@ -673,5 +699,5 @@ Player::Stop()
 		fVideoView->Clear();
 		fVideoView->SetPlaceholder("stopped");
 	}
-	EmitStatus(kStopped, "");
+	if (notify) EmitStatus(kStopped, "");
 }

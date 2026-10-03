@@ -8,6 +8,9 @@
 
 #include <string>
 #include <vector>
+#include <deque>
+
+class LeiraDecoder;
 
 // The real front end, driven from userland through the USB Kit.
 //
@@ -71,16 +74,25 @@ public:
 	virtual status_t Tune(uint64 frequencyHz);
 	virtual status_t GetStatus(Status* out);
 	virtual ssize_t Read(void* buffer, size_t size);
+	virtual void CancelRead();
+	// Expensive local key initialization; call on a worker before Tune().
+	status_t PreparePlayback();
+	void BeginPlayback();
+	status_t StartReading();
+	// Diagnostic capture only: encrypted 208-byte USB frames.
+	ssize_t ReadRaw(void* data, size_t size)
+		{ return fReady ? BulkRead(data, size, 1000000) : B_NO_INIT; }
+	ssize_t DecoderControl(uint8 type, uint8 request, uint16 value,
+		uint16 index, uint16 length, void* data)
+		{ return ControlTimed(type, request, value, index, length, data, 1000000); }
 	virtual std::string Description() const;
 
 	// Where to find the 8051 firmware image uploaded to a blank module. If
 	// unset, a few standard locations are tried. See LocateFirmware().
 	void SetFirmwarePath(const std::string& path) { fFirmwarePath = path; }
 
-	// Tune the given channel and look at the data endpoint just long enough to
-	// say whether a transport stream is coming out of it. This is the signal
-	// test the scanner uses - it does not depend on knowing which demodulator
-	// register is the lock bit, only on whether TS packets actually arrive.
+	// Tune and inspect the verified demodulator lock bits. The USB payload is
+	// encrypted, so plain TS sync is not a valid reception test here.
 	//
 	// The default is deliberately generous: an ISDB-T demodulator can take
 	// around a second to acquire on a weak signal, and a scan that gives up
@@ -141,6 +153,17 @@ public:
 	static bool LooksLikeTuner(const BUSBDevice& device);
 
 private:
+	static status_t ReceiveEntry(void* cookie);
+	void StopReceiving();
+	LeiraDecoder*			fDecoder;
+	BLocker					fReceiveLock;
+	std::deque<uint8>		fReceived;
+	std::vector<uint8>		fDecoded;
+	size_t					fDecodedOffset;
+	thread_id				fReceiveThread;
+	int32					fReadCancelled;
+	status_t				fReceiveError;
+	std::string				fReceiveErrorText;
 	static const DeviceProfile* ProfileFor(uint16 vendor, uint16 product);
 
 	// The internal module is a Cypress EZ-USB: 054c:0279 in both its blank

@@ -1,11 +1,16 @@
 #include "TunerAdapterIO.h"
+#include <Autolock.h>
+#include <Locker.h>
+#include <algorithm>
+#include <string.h>
+#include <vector>
 
 namespace {
 // How long to wait for the first bytes before declaring the channel dead.
 // A demodulator needs to acquire lock before it emits anything, and on a
 // weak signal that is genuinely slow - several seconds is normal, not a
 // sign of failure.
-const bigtime_t kTunerTimeout = 15000000;
+const bigtime_t kTunerTimeout = 45000000;
 
 const size_t kChunkSize = 32768;
 
@@ -15,11 +20,64 @@ const size_t kChunkSize = 32768;
 // seek backwards over that window while it works. Handing it one chunk, the
 // way an elementary-stream source can get away with, leaves it probing a
 // stream that has barely started.
-const size_t kProbeBytes = 256 * 1024;
+const size_t kProbeBytes = 128 * 1024;
+
+// BAdapterIO's default BMallocIO grows for the lifetime of a broadcast.
+// Retain a bounded backward-seek window for format probing instead.
+class StreamBuffer : public BPositionIO {
+public:
+	StreamBuffer() : fData(4 * 1024 * 1024), fEnd(0), fPosition(0),
+		fLock("oneseg stream buffer") {}
+	ssize_t ReadAt(off_t position, void* data, size_t size)
+	{
+		BAutolock lock(fLock);
+		if (position < First() || position > fEnd) return B_BAD_VALUE;
+		size = std::min(size, (size_t)(fEnd - position));
+		size_t offset = (size_t)(position % fData.size());
+		size_t first = std::min(size, fData.size() - offset);
+		if (first) memcpy(data, &fData[offset], first);
+		if (size > first) memcpy((uint8*)data + first, &fData[0], size - first);
+		return size;
+	}
+	ssize_t WriteAt(off_t position, const void* data, size_t size)
+	{
+		BAutolock lock(fLock);
+		if (position != fEnd || size > fData.size()) return B_BAD_VALUE;
+		size_t offset = (size_t)(position % fData.size());
+		size_t first = std::min(size, fData.size() - offset);
+		if (first) memcpy(&fData[offset], data, first);
+		if (size > first) memcpy(&fData[0], (const uint8*)data + first, size - first);
+		fEnd += size;
+		return size;
+	}
+	off_t Seek(off_t offset, uint32 mode)
+	{
+		BAutolock lock(fLock);
+		off_t position = mode == SEEK_SET ? offset
+			: mode == SEEK_CUR ? fPosition + offset : fEnd + offset;
+		if (position < First() || position > fEnd) return B_BAD_VALUE;
+		return fPosition = position;
+	}
+	off_t Position() const { BAutolock lock(fLock); return fPosition; }
+	status_t GetSize(off_t* size) const
+		{ BAutolock lock(fLock); *size = fEnd; return B_OK; }
+	status_t SetSize(off_t size)
+	{
+		BAutolock lock(fLock);
+		if (size != 0) return B_NOT_SUPPORTED;
+		fEnd = fPosition = 0;
+		return B_OK;
+	}
+private:
+	off_t First() const { return std::max((off_t)0, fEnd - (off_t)fData.size()); }
+	std::vector<uint8> fData;
+	off_t fEnd, fPosition;
+	mutable BLocker fLock;
+};
 }
 
 
-TunerAdapterIO::TunerAdapterIO(Tuner* tuner, const BMessenger& nameTarget)
+TunerAdapterIO::TunerAdapterIO(Tuner* tuner, const BMessenger& nameTarget, uint64 generation)
 	:
 	// Seekable, matching R World Radio's HlsAdapterIO. Declaring a live
 	// source as streaming-only looks more honest, but BAdapterIO's backing
@@ -29,6 +87,7 @@ TunerAdapterIO::TunerAdapterIO(Tuner* tuner, const BMessenger& nameTarget)
 	BAdapterIO(B_MEDIA_STREAMING | B_MEDIA_SEEKABLE, kTunerTimeout),
 	fTuner(tuner),
 	fNameTarget(nameTarget),
+	fGeneration(generation),
 	fInputAdapter(NULL),
 	fWorkerThread(-1),
 	fInitSem(create_sem(0, "tuner-adapter-init")),
@@ -37,27 +96,35 @@ TunerAdapterIO::TunerAdapterIO(Tuner* tuner, const BMessenger& nameTarget)
 	fStopRequested(0),
 	fRunning(0)
 {
+	SetBuffer(new StreamBuffer());
 }
 
 
 TunerAdapterIO::~TunerAdapterIO()
 {
+	Stop();
+	delete_sem(fInitSem);
+}
+
+
+void
+TunerAdapterIO::Stop()
+{
 	atomic_set(&fStopRequested, 1);
+	atomic_set(&fRunning, 0);
 	if (fWorkerThread >= 0) {
 		status_t exitValue;
 		wait_for_thread(fWorkerThread, &exitValue);
+		fWorkerThread = -1;
 	}
-	delete_sem(fInitSem);
 }
 
 
 void
 TunerAdapterIO::GetFlags(int32* flags) const
 {
-	// Live broadcast: no seeking backwards, unlike HlsAdapterIO which can
-	// serve from its buffered segments. Telling the Media Kit the truth here
-	// stops it trying to seek during format detection, which against a tuner
-	// would just stall.
+	// Format detection revisits bytes already read. The bounded ring keeps
+	// that recent history, without advertising arbitrary forward seeking.
 	*flags = B_MEDIA_STREAMING | B_MEDIA_SEEK_BACKWARD;
 }
 
@@ -128,6 +195,12 @@ TunerAdapterIO::RunWorker()
 	size_t written = 0;
 
 	while (atomic_get(&fStopRequested) == 0) {
+		// File replay can arrive faster than playback. Keep it within the
+		// retained seek window; live reception has its own bounded USB queue.
+		if ((off_t)written > Position() + 2 * 1024 * 1024) {
+			snooze(10000);
+			continue;
+		}
 		ssize_t read = fTuner->Read(chunk, kChunkSize);
 		if (read < 0) {
 			lastIssue = fTuner->LastError().empty()
@@ -140,7 +213,10 @@ TunerAdapterIO::RunWorker()
 			continue;
 		}
 
-		fInputAdapter->Write(chunk, read);
+		if (fInputAdapter->Write(chunk, read) != read) {
+			lastIssue = "could not buffer the transport stream";
+			break;
+		}
 		written += read;
 		if (written >= kProbeBytes)
 			ReleaseInitOnce(true);
@@ -158,4 +234,10 @@ TunerAdapterIO::RunWorker()
 	delete[] chunk;
 	ReleaseInitOnce(false, lastIssue); // no-op once data has flowed
 	atomic_set(&fRunning, 0);
+	if (!atomic_get(&fStopRequested) && fInitSucceeded) {
+		BMessage error(kStreamErrorMessage);
+		error.AddInt64("generation", fGeneration);
+		error.AddString("detail", lastIssue.c_str());
+		fNameTarget.SendMessage(&error);
+	}
 }

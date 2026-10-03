@@ -1,0 +1,34 @@
+SUMMARY="ISDB-T 1seg receiver for the Sony VAIO P tuner"
+DESCRIPTION="R One-Seg receives Japanese 1seg broadcasts through the tuner built into the Sony VAIO P. Includes the receiver firmware and local playback runtime, with channel scanning, volume control and fullscreen video."
+HOMEPAGE="https://github.com/rainygirl/haiku-roneseg"
+VERSION="0.1.0"
+REVISION="11"
+LICENSE="MIT"
+COPYRIGHT="2026 rainygirl"
+ARCHITECTURES_SUPPORTED="x86_gcc2 x86 x86_64"
+SECONDARY_ARCH="x86"
+SOURCE_DIR="roneseg"
+PACKAGE_FLAGS="-z zlib -2"
+PROVIDES="roneseg = $VERSION
+app:R_OneSeg = $VERSION"
+REQUIRES="haiku
+libiconv
+cmd:python3 >= 3.8
+openssl3"
+REQUIRES_SECONDARY="haiku_x86
+libiconv_x86
+cmd:python3 >= 3.8
+openssl3_x86"
+BUILD_REQUIRES="haiku_devel libiconv_devel"
+
+BUILD()
+{
+    $SETARCH make
+}
+
+INSTALL()
+{
+    binary=$(find objects.* -maxdepth 1 -name ROneSeg -type f | head -1)
+    [ -n "$binary" ] || { echo "ROneSeg binary missing" >&2; return 1; }
+    sh packaging/stage.sh "$prefix" "$binary"
+}

@@ -1,4 +1,6 @@
 #include "UsbTuner.h"
+#include "DataFiles.h"
+#include "LeiraDecoder.h"
 
 #include <Autolock.h>
 #include <OS.h>
@@ -124,8 +126,7 @@ const uint8 kRepeaterOpen = 0x10;		// demodulator 0x42
 
 // The demodulator's DSP program: 988 bytes, written 16 at a time through a
 // window - 0x6E/0x6F take the address (0x5000 up), 0x70 the data. It is
-// Sony's code and is not in this repository; recovery/extract_demod.py pulls
-// it out of the owner's own DtvCore.dll.
+// included in data/oneseg_demod.bin.
 const size_t kDemodProgramSize = 988;
 const uint16 kDemodProgramBase = 0x5000;
 
@@ -136,6 +137,11 @@ const uint16 kDemodProgramBase = 0x5000;
 std::string
 FindDataFile(const char* name, const std::string& preferred)
 {
+	if (!preferred.empty() && access(preferred.c_str(), R_OK) == 0)
+		return preferred;
+	std::string installed = OneSegDataFile(name);
+	if (!installed.empty())
+		return installed;
 	const char* directories[] = {
 		"/boot/home/config/settings/roneseg/",
 		"/boot/home/config/non-packaged/data/roneseg/",
@@ -190,29 +196,6 @@ ClassName(uint8 baseClass)
 		case 0xff: return "vendor specific";
 		default:   return "other";
 	}
-}
-
-
-// Is this a valid MPEG-2 transport stream? Sync bytes at 188-byte stride are
-// not something arbitrary binary produces.
-bool
-LooksLikeTransportStream(const uint8* data, size_t size)
-{
-	const int kSizes[] = { 188, 192, 204 };
-	for (size_t s = 0; s < sizeof(kSizes) / sizeof(kSizes[0]); s++) {
-		int packet = kSizes[s];
-		for (size_t start = 0; start < (size_t)packet && start < size; start++) {
-			int hits = 0;
-			for (size_t off = start; off < size; off += packet) {
-				if (data[off] != 0x47)
-					break;
-				hits++;
-			}
-			if (hits >= 5)
-				return true;
-		}
-	}
-	return false;
 }
 
 
@@ -338,6 +321,12 @@ RunTransfer(TransferJob* job, void* out, bigtime_t timeout)
 
 UsbTuner::UsbTuner()
 	:
+	fDecoder(NULL),
+	fReceiveLock("oneseg receive"),
+	fDecodedOffset(0),
+	fReceiveThread(-1),
+	fReadCancelled(0),
+	fReceiveError(B_OK),
 	fRoster(NULL),
 	fDevice(NULL),
 	fDeviceLock("roneseg usb device"),
@@ -610,9 +599,7 @@ UsbTuner::UploadFirmware()
 {
 	std::string path = LocateFirmware();
 	if (path.empty()) {
-		SetLastError("the module needs its firmware: put oneseg_fw.rec in "
-			"~/config/settings/roneseg/ (extract it with "
-			"recovery/extract_fw.py - see FIRMWARE.md)");
+		SetLastError("Receiver firmware is missing. Reinstall R One-Seg.");
 		return B_ENTRY_NOT_FOUND;
 	}
 
@@ -814,9 +801,7 @@ UsbTuner::LoadDemodProgram(std::vector<uint8>* program)
 {
 	std::string path = FindDataFile("oneseg_demod.bin", std::string());
 	if (path.empty()) {
-		SetLastError("the demodulator needs its program: put oneseg_demod.bin "
-			"in ~/config/settings/roneseg/ (extract it from DtvCore.dll with "
-			"recovery/extract_demod.py - see FIRMWARE.md)");
+		SetLastError("Demodulator program is missing. Reinstall R One-Seg.");
 		return B_ENTRY_NOT_FOUND;
 	}
 	FILE* file = fopen(path.c_str(), "rb");
@@ -976,6 +961,10 @@ UsbTuner::Open()
 void
 UsbTuner::Close()
 {
+	CancelRead();
+	StopReceiving();
+	delete fDecoder;
+	fDecoder = NULL;
 	fReady = false;
 	fStreamEndpoint = NULL;
 	fStatusEndpoint = NULL;
@@ -996,6 +985,7 @@ UsbTuner::Close()
 status_t
 UsbTuner::Tune(uint64 frequencyHz)
 {
+	StopReceiving();
 	if (!fReady) {
 		status_t status = Open();
 		if (status != B_OK)
@@ -1123,9 +1113,152 @@ UsbTuner::BulkRead(void* buffer, size_t size, bigtime_t timeout)
 ssize_t
 UsbTuner::Read(void* buffer, size_t size)
 {
-	if (!fReady)
+	if (!fReady || fDecoder == NULL || fReceiveThread < 0)
 		return B_NO_INIT;
-	return BulkRead(buffer, size, 1000000);
+	if (atomic_get(&fReadCancelled)) return B_CANCELED;
+	if (fDecodedOffset >= fDecoded.size()) {
+		std::vector<uint8> encrypted;
+		bigtime_t deadline = system_time() + 250000;
+		while (!atomic_get(&fReadCancelled)) {
+			fReceiveLock.Lock();
+			if (fReceiveError != B_OK) {
+				status_t error = fReceiveError;
+				SetLastError(fReceiveErrorText);
+				fReceiveLock.Unlock();
+				return error;
+			}
+			size_t count = fReceived.size();
+			if (count >= 208 * 256 || system_time() >= deadline) {
+				if (count > 208 * 4096) count = 208 * 4096;
+				encrypted.reserve(count);
+				for (size_t i = 0; i < count; i++) {
+					encrypted.push_back(fReceived.front());
+					fReceived.pop_front();
+				}
+				fReceiveLock.Unlock();
+				break;
+			}
+			fReceiveLock.Unlock();
+			snooze(10000);
+		}
+		if (atomic_get(&fReadCancelled)) return B_CANCELED;
+		if (encrypted.empty()) return 0;
+		bigtime_t decodeStart = system_time();
+		status_t status = fDecoder->Decode(&encrypted[0], encrypted.size(), fDecoded);
+		if (status != B_OK) {
+			SetLastError(fDecoder->Error());
+			return status;
+		}
+		{
+			BAutolock lock(fReceiveLock);
+			fprintf(stderr, "roneseg: local decode %lu USB bytes -> %lu TS bytes "
+				"in %.2f s, %lu USB bytes queued\n",
+				(unsigned long)encrypted.size(), (unsigned long)fDecoded.size(),
+				(system_time() - decodeStart) / 1000000.0,
+				(unsigned long)fReceived.size());
+		}
+		fDecodedOffset = 0;
+	}
+	size_t count = fDecoded.size() - fDecodedOffset;
+	if (count > size) count = size;
+	if (count) memcpy(buffer, &fDecoded[fDecodedOffset], count);
+	fDecodedOffset += count;
+	return count;
+}
+
+
+void
+UsbTuner::CancelRead()
+{
+	atomic_set(&fReadCancelled, 1);
+	BAutolock lock(fReceiveLock);
+	if (fDecoder) fDecoder->Cancel();
+}
+
+
+void
+UsbTuner::StopReceiving()
+{
+	if (fReceiveThread >= 0) {
+		atomic_set(&fReadCancelled, 1);
+		status_t result;
+		wait_for_thread(fReceiveThread, &result);
+		fReceiveThread = -1;
+	}
+}
+
+
+void
+UsbTuner::BeginPlayback()
+{
+	StopReceiving();
+	atomic_set(&fReadCancelled, 0);
+}
+
+
+status_t
+UsbTuner::PreparePlayback()
+{
+	LeiraDecoder* old;
+	{
+		BAutolock lock(fReceiveLock);
+		if (!atomic_get(&fReadCancelled) && fDecoder && fDecoder->Resume())
+			return B_OK;
+		old = fDecoder;
+		fDecoder = NULL;
+	}
+	delete old;
+	{
+		BAutolock lock(fReceiveLock);
+		fDecoder = new(std::nothrow) LeiraDecoder(this);
+		if (fDecoder && atomic_get(&fReadCancelled)) fDecoder->Cancel();
+	}
+	if (!fDecoder) return B_NO_MEMORY;
+	status_t result = fDecoder->Initialize();
+	if (result != B_OK) SetLastError(fDecoder->Error());
+	return result;
+}
+
+
+status_t
+UsbTuner::StartReading()
+{
+	if (!fDecoder || atomic_get(&fReadCancelled)) return B_NO_INIT;
+	status_t status = fDecoder->Reset();
+	if (status != B_OK) {
+		SetLastError(fDecoder->Error());
+		return status;
+	}
+	fReceived.clear();
+	fDecoded.clear();
+	fDecodedOffset = 0;
+	fReceiveError = B_OK;
+	fReceiveErrorText.clear();
+	fReceiveThread = spawn_thread(ReceiveEntry, "oneseg USB receive",
+		B_DISPLAY_PRIORITY, this);
+	if (fReceiveThread < 0) return fReceiveThread;
+	resume_thread(fReceiveThread);
+	return B_OK;
+}
+
+
+status_t
+UsbTuner::ReceiveEntry(void* cookie)
+{
+	UsbTuner* tuner = (UsbTuner*)cookie;
+	uint8 data[416 * 16];
+	while (!atomic_get(&tuner->fReadCancelled)) {
+		ssize_t size = tuner->BulkRead(data, sizeof(data), 250000);
+		BAutolock lock(tuner->fReceiveLock);
+		if (size < 0 || tuner->fReceived.size() + size > 416 * 4096) {
+			tuner->fReceiveError = size < 0 ? size : B_BUFFER_OVERFLOW;
+			tuner->fReceiveErrorText = size < 0 ? "USB reception failed"
+				: "Local decoder cannot keep up with the broadcast";
+			break;
+		}
+		tuner->fReceived.insert(tuner->fReceived.end(), data, data + size);
+	}
+	return B_OK;
 }
 
 
@@ -1175,24 +1308,14 @@ UsbTuner::HasSignal(uint64 frequencyHz, bigtime_t timeout)
 	if (Tune(frequencyHz) != B_OK)
 		return false;
 	fDiagnostic.tuned = true;
-	fDiagnostic.lock = WaitForLock(1500000);
+	fDiagnostic.lock = WaitForLock(timeout);
 	fDiagnostic.measured = MeasureSignal(&fDiagnostic.strength);
 	if (fDiagnostic.lock != kLocked)
 		return false;
 
-	const size_t kSize = 16384;
-	uint8* buffer = (uint8*)malloc(kSize);
-	if (buffer == NULL)
-		return false;
-
-	// Only read once the demodulator says it has locked: a bulk read with
-	// nothing to deliver leaves later control requests stuck (AGENTS.md).
-	ssize_t got = BulkRead(buffer, kSize, timeout);
-	bool stream = got > 0 && LooksLikeTransportStream(buffer, got);
-	fDiagnostic.bytes = got;
-	fDiagnostic.sync = stream;
-	free(buffer);
-	return stream;
+	// The bulk pipe carries encrypted 208-byte frames, not 188-byte TS.
+	// Scan using the demodulator's verified lock bits; decode on selection.
+	return true;
 }
 
 
@@ -1204,16 +1327,11 @@ UsbTuner::GetStatus(Status* out)
 	if (!fReady)
 		return B_NO_INIT;
 
-	const size_t kSize = 8192;
-	uint8* buffer = (uint8*)malloc(kSize);
-	if (buffer == NULL)
-		return B_NO_MEMORY;
-
-	ssize_t got = BulkRead(buffer, kSize, 400000);
-	out->locked = got > 0 && LooksLikeTransportStream(buffer, got);
+	uint8 registers[3];
+	if (!ReadRegisters(kDemod, 0, registers, 3)) return B_IO_ERROR;
+	out->locked = (registers[0] & 2) && (registers[2] & 8);
 	out->strength = -1;
 	out->quality = -1;
-	free(buffer);
 	return B_OK;
 }
 

@@ -30,13 +30,15 @@ public:
 	// Sent to nameTarget as new service names arrive out of the SDT:
 	//   string "name" - the first service's name, UTF-8
 	static const uint32 kServiceNameMessage = 'ROsn';
+	static const uint32 kStreamErrorMessage = 'ROer';
 
 	// Does not take ownership of the tuner; Player outlives this.
-	TunerAdapterIO(Tuner* tuner, const BMessenger& nameTarget);
+	TunerAdapterIO(Tuner* tuner, const BMessenger& nameTarget, uint64 generation);
 	~TunerAdapterIO();
 
 	void GetFlags(int32* flags) const;
 	status_t Open();
+	void Stop();
 
 	bool IsRunning() const;
 	const std::string& InitError() const { return fInitError; }
@@ -48,6 +50,7 @@ private:
 
 	Tuner*			fTuner;
 	BMessenger		fNameTarget;
+	uint64			fGeneration;
 	SiParser		fSiParser;
 	std::string		fInitError;
 	BInputAdapter*	fInputAdapter;

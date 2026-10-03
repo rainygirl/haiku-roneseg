@@ -15,6 +15,7 @@ SRCS = \
 	src/ChannelTable.cpp \
 	src/FileTuner.cpp \
 	src/Localize.cpp \
+	src/LeiraDecoder.cpp \
 	src/TunerDiagnostic.cpp \
 	src/UsbTuner.cpp
 
@@ -40,10 +41,10 @@ RSRCS =
 # `setarch x86 make`.
 GCC_VERSION := $(shell g++ -dumpversion)
 ifeq ($(filter 2.%,$(GCC_VERSION)),)
-LIBS = be media device iconv stdc++ supc++ \
+LIBS = be media device network iconv stdc++ supc++ \
 	/boot/system/develop/lib/libshared.a
 else
-LIBS = be media device iconv \
+LIBS = be media device network iconv \
 	/boot/system/develop/lib/libstdc++.r4.so \
 	/boot/system/develop/lib/libshared.a
 endif

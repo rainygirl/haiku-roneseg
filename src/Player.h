@@ -48,9 +48,11 @@ public:
 	// Does not take ownership of the tuner. Returns immediately; progress
 	// arrives as messages.
 	void Start(Tuner* tuner);
-	void Stop();
+	void Stop(bool notify = true);
+	void SetVolume(float volume);
 
 	bool IsPlaying() const;
+	bool IsCurrentGeneration(uint64 generation) const;
 
 	// Frames the video decoder gave up on because the audio clock had
 	// already passed them. Worth putting on screen: on this hardware it is
@@ -77,6 +79,7 @@ private:
 	mutable BLocker	fMutex;
 	Session*		fSession;
 	uint64			fGeneration;
+	float			fVolume;
 };
 
 #endif

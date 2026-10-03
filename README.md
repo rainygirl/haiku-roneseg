@@ -2,50 +2,36 @@
 
 # R One-Seg
 
-Haiku OS 用の ISDB-T ワンセグ受信アプリです。日本国内向け Sony VAIO P (VGN-P70H) に内蔵されたチューナーモジュールを対象にしています。
+Haiku OS 用の ISDB-T ワンセグ受信アプリです。日本国内向け Sony VAIO P (VGN-P70H) に内蔵されたチューナーモジュールを対象にしています。日本やブラジルなど、ISDB-T を採用している国でのみ使用できます。
 
-[한국어](README.ko.md)
+[日本語](README.md) · [한국어](README.ko.md) · [English](README.en.md) · [Português (Brasil)](README.pt-BR.md)
 
-## ファームウェアが必要です
+![VAIO P の R One-Seg で実放送を受信・再生している画面](captures/vaio-oneseg-2026-10-03.png)
 
-モジュールは電源投入時にファームウェアを持っていません。`oneseg_fw.rec` が無い
-状態では、USB 上には見えていてもストリーム用エンドポイントが出ないため、
-**スキャンは 1 チャンネルも見つけません**。イメージはソニーのものなので同梱して
-おらず、お手元の実機のドライバから生成します。
+## VAIO 内での受信と再生
 
-やることは、**Windows 用ドライバ `vscd.sys` をこのスクリプトの隣かデスクトップに
-置いて `./install.sh` を実行するだけ**です。抽出・検証・設置まで自動で行い、
-結果を 1 行で報告します:
+受信・USB リンクの復号・映像と音声の再生はすべて VAIO 内で処理します。
+起動時の受信機準備が終わってからアンテナを接続してスキャンし、チャンネルを
+クリックすると再生します。音量スライダーと全画面ボタンは画面下部にあります。
 
-```
-==> firmware: 666 records, 8597 bytes, loading to 0x0000-0x2207, reset vector LJMP 0x1aae
-```
+## インストール
 
-ドライバの入手元、別の場所にある場合の指定 (`--driver`)、取り出せないときの対処は
-**[FIRMWARE.md](FIRMWARE.md)** にまとめてあります。設置状況は
-`ROneSeg --list-usb` の `Firmware:` 行でも確認できます。
+VAIO P の 32 ビット Haiku では、次のコマンドでまとめてインストールできます:
 
-## ビルド
-
-必要な開発パッケージ (gcc2 ハイブリッドでは iconv を両方のアーキテクチャ分):
-
-```
-pkgman install libiconv_devel libiconv_x86_devel
+```sh
+curl -fsSL https://pkgman.rainygirl.com/install-all.sh | sh -s -- roneseg_x86
 ```
 
-実機上で Haiku SDK を使って:
+ソースからインストールする場合:
 
-```
+```sh
+git clone https://github.com/rainygirl/haiku-roneseg.git
+cd haiku-roneseg
 ./install.sh
 ```
 
-対象となる 32 ビットイメージは gcc2 ハイブリッドで、既定の `g++` は GCC 2.95 の
-ためこのコードをビルドできません。`install.sh` はそれを検出すると
-`setarch x86` でモダンなセカンダリコンパイラに切り替えます。手動なら
-`setarch x86 make` です。
-
-1.33 GHz シングルスレッドの Atom なので、フルビルドは時間がかかり本体が熱く
-なります。
+必要なパッケージと受信データを自動でインストールします。完了後、Deskbar の
+**R One-Seg** を起動してください。
 
 ## キー操作
 
@@ -54,6 +40,7 @@ pkgman install libiconv_devel libiconv_x86_devel
 | Up / Down | チャンネル選択の移動 (再選局はしない) |
 | Enter | 選択したチャンネルを選局 |
 | Command-F | 拡大表示の切り替え |
+| Command-Shift-F | 全画面表示の切り替え |
+| Esc | 全画面表示から戻る |
 | Command-U | USB デバイスの報告 |
 | Command-. | 停止 |
-

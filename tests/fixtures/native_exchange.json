@@ -1,0 +1,973 @@
+{
+  "description": "Synthetic authentication vectors encrypted independently with openssl enc. USB register sequence from the observed protocol. No owner key or broadcast data.",
+  "client_id": "11223344",
+  "auth_key": "000102030405060708090a0b0c0d0e0f",
+  "secret": "a0a1a2a3a4a5a6a7a8a9aaabacadaeaf",
+  "nonce": "b0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+  "packet_key": "d0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
+  "transfers": [
+    {
+      "type": 64,
+      "request": 32,
+      "value": 1,
+      "index": 32523,
+      "length": 1,
+      "result": 1,
+      "data": "01"
+    },
+    {
+      "type": 192,
+      "request": 43,
+      "value": 2,
+      "index": 44,
+      "length": 2,
+      "result": 2,
+      "data": "0200"
+    },
+    {
+      "type": 64,
+      "request": 44,
+      "value": 2,
+      "index": 26,
+      "length": 2,
+      "result": 2,
+      "data": "0000"
+    },
+    {
+      "type": 64,
+      "request": 44,
+      "value": 2,
+      "index": 26,
+      "length": 2,
+      "result": 2,
+      "data": "0080"
+    },
+    {
+      "type": 192,
+      "request": 43,
+      "value": 2,
+      "index": 34,
+      "length": 2,
+      "result": 2,
+      "data": "0000"
+    },
+    {
+      "type": 64,
+      "request": 44,
+      "value": 2,
+      "index": 34,
+      "length": 2,
+      "result": 2,
+      "data": "0001"
+    },
+    {
+      "type": 192,
+      "request": 43,
+      "value": 2,
+      "index": 36,
+      "length": 2,
+      "result": 2,
+      "data": "0000"
+    },
+    {
+      "type": 64,
+      "request": 44,
+      "value": 2,
+      "index": 36,
+      "length": 2,
+      "result": 2,
+      "data": "0100"
+    },
+    {
+      "type": 192,
+      "request": 43,
+      "value": 2,
+      "index": 44,
+      "length": 2,
+      "result": 2,
+      "data": "0200"
+    },
+    {
+      "type": 64,
+      "request": 44,
+      "value": 2,
+      "index": 6,
+      "length": 2,
+      "result": 2,
+      "data": "0200"
+    },
+    {
+      "type": 192,
+      "request": 43,
+      "value": 2,
+      "index": 42,
+      "length": 2,
+      "result": 2,
+      "data": "0000"
+    },
+    {
+      "type": 64,
+      "request": 44,
+      "value": 2,
+      "index": 42,
+      "length": 2,
+      "result": 2,
+      "data": "0000"
+    },
+    {
+      "type": 192,
+      "request": 43,
+      "value": 2,
+      "index": 42,
+      "length": 2,
+      "result": 2,
+      "data": "0000"
+    },
+    {
+      "type": 64,
+      "request": 44,
+      "value": 2,
+      "index": 42,
+      "length": 2,
+      "result": 2,
+      "data": "0400"
+    },
+    {
+      "type": 64,
+      "request": 44,
+      "value": 2,
+      "index": 52,
+      "length": 2,
+      "result": 2,
+      "data": "2211"
+    },
+    {
+      "type": 64,
+      "request": 44,
+      "value": 2,
+      "index": 52,
+      "length": 2,
+      "result": 2,
+      "data": "4433"
+    },
+    {
+      "type": 192,
+      "request": 43,
+      "value": 2,
+      "index": 44,
+      "length": 2,
+      "result": 2,
+      "data": "0200"
+    },
+    {
+      "type": 192,
+      "request": 43,
+      "value": 2,
+      "index": 6,
+      "length": 2,
+      "result": 2,
+      "data": "0700"
+    },
+    {
+      "type": 192,
+      "request": 43,
+      "value": 2,
+      "index": 44,
+      "length": 2,
+      "result": 2,
+      "data": "0200"
+    },
+    {
+      "type": 192,
+      "request": 43,
+      "value": 2,
+      "index": 42,
+      "length": 2,
+      "result": 2,
+      "data": "0400"
+    },
+    {
+      "type": 64,
+      "request": 44,
+      "value": 2,
+      "index": 42,
+      "length": 2,
+      "result": 2,
+      "data": "0400"
+    },
+    {
+      "type": 192,
+      "request": 43,
+      "value": 2,
+      "index": 42,
+      "length": 2,
+      "result": 2,
+      "data": "0400"
+    },
+    {
+      "type": 64,
+      "request": 44,
+      "value": 2,
+      "index": 42,
+      "length": 2,
+      "result": 2,
+      "data": "1400"
+    },
+    {
+      "type": 192,
+      "request": 43,
+      "value": 2,
+      "index": 42,
+      "length": 2,
+      "result": 2,
+      "data": "1400"
+    },
+    {
+      "type": 64,
+      "request": 44,
+      "value": 2,
+      "index": 42,
+      "length": 2,
+      "result": 2,
+      "data": "1400"
+    },
+    {
+      "type": 192,
+      "request": 43,
+      "value": 2,
+      "index": 42,
+      "length": 2,
+      "result": 2,
+      "data": "1400"
+    },
+    {
+      "type": 64,
+      "request": 44,
+      "value": 2,
+      "index": 42,
+      "length": 2,
+      "result": 2,
+      "data": "1402"
+    },
+    {
+      "type": 192,
+      "request": 43,
+      "value": 2,
+      "index": 56,
+      "length": 2,
+      "result": 2,
+      "data": "c1c0"
+    },
+    {
+      "type": 192,
+      "request": 43,
+      "value": 2,
+      "index": 56,
+      "length": 2,
+      "result": 2,
+      "data": "c3c2"
+    },
+    {
+      "type": 192,
+      "request": 43,
+      "value": 2,
+      "index": 42,
+      "length": 2,
+      "result": 2,
+      "data": "1402"
+    },
+    {
+      "type": 64,
+      "request": 44,
+      "value": 2,
+      "index": 42,
+      "length": 2,
+      "result": 2,
+      "data": "1400"
+    },
+    {
+      "type": 192,
+      "request": 43,
+      "value": 2,
+      "index": 42,
+      "length": 2,
+      "result": 2,
+      "data": "1400"
+    },
+    {
+      "type": 64,
+      "request": 44,
+      "value": 2,
+      "index": 42,
+      "length": 2,
+      "result": 2,
+      "data": "1402"
+    },
+    {
+      "type": 192,
+      "request": 43,
+      "value": 2,
+      "index": 56,
+      "length": 2,
+      "result": 2,
+      "data": "c5c4"
+    },
+    {
+      "type": 192,
+      "request": 43,
+      "value": 2,
+      "index": 56,
+      "length": 2,
+      "result": 2,
+      "data": "c7c6"
+    },
+    {
+      "type": 64,
+      "request": 44,
+      "value": 2,
+      "index": 6,
+      "length": 2,
+      "result": 2,
+      "data": "1000"
+    },
+    {
+      "type": 192,
+      "request": 43,
+      "value": 2,
+      "index": 42,
+      "length": 2,
+      "result": 2,
+      "data": "1402"
+    },
+    {
+      "type": 64,
+      "request": 44,
+      "value": 2,
+      "index": 42,
+      "length": 2,
+      "result": 2,
+      "data": "1402"
+    },
+    {
+      "type": 192,
+      "request": 43,
+      "value": 2,
+      "index": 42,
+      "length": 2,
+      "result": 2,
+      "data": "1402"
+    },
+    {
+      "type": 64,
+      "request": 44,
+      "value": 2,
+      "index": 42,
+      "length": 2,
+      "result": 2,
+      "data": "3402"
+    },
+    {
+      "type": 64,
+      "request": 44,
+      "value": 2,
+      "index": 46,
+      "length": 2,
+      "result": 2,
+      "data": "030b"
+    },
+    {
+      "type": 64,
+      "request": 44,
+      "value": 2,
+      "index": 46,
+      "length": 2,
+      "result": 2,
+      "data": "1c40"
+    },
+    {
+      "type": 64,
+      "request": 44,
+      "value": 2,
+      "index": 46,
+      "length": 2,
+      "result": 2,
+      "data": "1d91"
+    },
+    {
+      "type": 64,
+      "request": 44,
+      "value": 2,
+      "index": 46,
+      "length": 2,
+      "result": 2,
+      "data": "2a4b"
+    },
+    {
+      "type": 64,
+      "request": 44,
+      "value": 2,
+      "index": 46,
+      "length": 2,
+      "result": 2,
+      "data": "493b"
+    },
+    {
+      "type": 64,
+      "request": 44,
+      "value": 2,
+      "index": 46,
+      "length": 2,
+      "result": 2,
+      "data": "b0d8"
+    },
+    {
+      "type": 64,
+      "request": 44,
+      "value": 2,
+      "index": 46,
+      "length": 2,
+      "result": 2,
+      "data": "e089"
+    },
+    {
+      "type": 64,
+      "request": 44,
+      "value": 2,
+      "index": 46,
+      "length": 2,
+      "result": 2,
+      "data": "ebbc"
+    },
+    {
+      "type": 64,
+      "request": 44,
+      "value": 2,
+      "index": 46,
+      "length": 2,
+      "result": 2,
+      "data": "3502"
+    },
+    {
+      "type": 64,
+      "request": 44,
+      "value": 2,
+      "index": 46,
+      "length": 2,
+      "result": 2,
+      "data": "77ca"
+    },
+    {
+      "type": 64,
+      "request": 44,
+      "value": 2,
+      "index": 46,
+      "length": 2,
+      "result": 2,
+      "data": "8f78"
+    },
+    {
+      "type": 64,
+      "request": 44,
+      "value": 2,
+      "index": 46,
+      "length": 2,
+      "result": 2,
+      "data": "5d0e"
+    },
+    {
+      "type": 64,
+      "request": 44,
+      "value": 2,
+      "index": 46,
+      "length": 2,
+      "result": 2,
+      "data": "417c"
+    },
+    {
+      "type": 64,
+      "request": 44,
+      "value": 2,
+      "index": 46,
+      "length": 2,
+      "result": 2,
+      "data": "7e69"
+    },
+    {
+      "type": 64,
+      "request": 44,
+      "value": 2,
+      "index": 46,
+      "length": 2,
+      "result": 2,
+      "data": "314f"
+    },
+    {
+      "type": 64,
+      "request": 44,
+      "value": 2,
+      "index": 46,
+      "length": 2,
+      "result": 2,
+      "data": "b898"
+    },
+    {
+      "type": 192,
+      "request": 43,
+      "value": 2,
+      "index": 6,
+      "length": 2,
+      "result": 2,
+      "data": "3700"
+    },
+    {
+      "type": 64,
+      "request": 44,
+      "value": 2,
+      "index": 6,
+      "length": 2,
+      "result": 2,
+      "data": "2000"
+    },
+    {
+      "type": 192,
+      "request": 43,
+      "value": 2,
+      "index": 44,
+      "length": 2,
+      "result": 2,
+      "data": "8200"
+    },
+    {
+      "type": 64,
+      "request": 44,
+      "value": 2,
+      "index": 6,
+      "length": 2,
+      "result": 2,
+      "data": "0200"
+    },
+    {
+      "type": 192,
+      "request": 43,
+      "value": 2,
+      "index": 42,
+      "length": 2,
+      "result": 2,
+      "data": "3402"
+    },
+    {
+      "type": 64,
+      "request": 44,
+      "value": 2,
+      "index": 42,
+      "length": 2,
+      "result": 2,
+      "data": "3002"
+    },
+    {
+      "type": 192,
+      "request": 43,
+      "value": 2,
+      "index": 42,
+      "length": 2,
+      "result": 2,
+      "data": "3002"
+    },
+    {
+      "type": 64,
+      "request": 44,
+      "value": 2,
+      "index": 42,
+      "length": 2,
+      "result": 2,
+      "data": "3402"
+    },
+    {
+      "type": 64,
+      "request": 44,
+      "value": 2,
+      "index": 52,
+      "length": 2,
+      "result": 2,
+      "data": "2211"
+    },
+    {
+      "type": 64,
+      "request": 44,
+      "value": 2,
+      "index": 52,
+      "length": 2,
+      "result": 2,
+      "data": "4433"
+    },
+    {
+      "type": 192,
+      "request": 43,
+      "value": 2,
+      "index": 44,
+      "length": 2,
+      "result": 2,
+      "data": "8200"
+    },
+    {
+      "type": 192,
+      "request": 43,
+      "value": 2,
+      "index": 6,
+      "length": 2,
+      "result": 2,
+      "data": "1700"
+    },
+    {
+      "type": 192,
+      "request": 43,
+      "value": 2,
+      "index": 44,
+      "length": 2,
+      "result": 2,
+      "data": "8200"
+    },
+    {
+      "type": 192,
+      "request": 43,
+      "value": 2,
+      "index": 42,
+      "length": 2,
+      "result": 2,
+      "data": "3402"
+    },
+    {
+      "type": 64,
+      "request": 44,
+      "value": 2,
+      "index": 42,
+      "length": 2,
+      "result": 2,
+      "data": "3402"
+    },
+    {
+      "type": 192,
+      "request": 43,
+      "value": 2,
+      "index": 42,
+      "length": 2,
+      "result": 2,
+      "data": "3402"
+    },
+    {
+      "type": 64,
+      "request": 44,
+      "value": 2,
+      "index": 42,
+      "length": 2,
+      "result": 2,
+      "data": "7402"
+    },
+    {
+      "type": 64,
+      "request": 44,
+      "value": 2,
+      "index": 46,
+      "length": 2,
+      "result": 2,
+      "data": "b1b0"
+    },
+    {
+      "type": 64,
+      "request": 44,
+      "value": 2,
+      "index": 46,
+      "length": 2,
+      "result": 2,
+      "data": "b3b2"
+    },
+    {
+      "type": 64,
+      "request": 44,
+      "value": 2,
+      "index": 46,
+      "length": 2,
+      "result": 2,
+      "data": "b5b4"
+    },
+    {
+      "type": 64,
+      "request": 44,
+      "value": 2,
+      "index": 46,
+      "length": 2,
+      "result": 2,
+      "data": "b7b6"
+    },
+    {
+      "type": 64,
+      "request": 44,
+      "value": 2,
+      "index": 46,
+      "length": 2,
+      "result": 2,
+      "data": "b9b8"
+    },
+    {
+      "type": 64,
+      "request": 44,
+      "value": 2,
+      "index": 46,
+      "length": 2,
+      "result": 2,
+      "data": "bbba"
+    },
+    {
+      "type": 64,
+      "request": 44,
+      "value": 2,
+      "index": 46,
+      "length": 2,
+      "result": 2,
+      "data": "bdbc"
+    },
+    {
+      "type": 64,
+      "request": 44,
+      "value": 2,
+      "index": 46,
+      "length": 2,
+      "result": 2,
+      "data": "bfbe"
+    },
+    {
+      "type": 64,
+      "request": 44,
+      "value": 2,
+      "index": 46,
+      "length": 2,
+      "result": 2,
+      "data": "a1a0"
+    },
+    {
+      "type": 64,
+      "request": 44,
+      "value": 2,
+      "index": 46,
+      "length": 2,
+      "result": 2,
+      "data": "a3a2"
+    },
+    {
+      "type": 64,
+      "request": 44,
+      "value": 2,
+      "index": 46,
+      "length": 2,
+      "result": 2,
+      "data": "a5a4"
+    },
+    {
+      "type": 64,
+      "request": 44,
+      "value": 2,
+      "index": 46,
+      "length": 2,
+      "result": 2,
+      "data": "a7a6"
+    },
+    {
+      "type": 64,
+      "request": 44,
+      "value": 2,
+      "index": 46,
+      "length": 2,
+      "result": 2,
+      "data": "a9a8"
+    },
+    {
+      "type": 64,
+      "request": 44,
+      "value": 2,
+      "index": 46,
+      "length": 2,
+      "result": 2,
+      "data": "abaa"
+    },
+    {
+      "type": 64,
+      "request": 44,
+      "value": 2,
+      "index": 46,
+      "length": 2,
+      "result": 2,
+      "data": "adac"
+    },
+    {
+      "type": 64,
+      "request": 44,
+      "value": 2,
+      "index": 46,
+      "length": 2,
+      "result": 2,
+      "data": "afae"
+    },
+    {
+      "type": 192,
+      "request": 43,
+      "value": 2,
+      "index": 6,
+      "length": 2,
+      "result": 2,
+      "data": "1701"
+    },
+    {
+      "type": 64,
+      "request": 44,
+      "value": 2,
+      "index": 6,
+      "length": 2,
+      "result": 2,
+      "data": "0001"
+    },
+    {
+      "type": 192,
+      "request": 43,
+      "value": 2,
+      "index": 48,
+      "length": 2,
+      "result": 2,
+      "data": "15e3"
+    },
+    {
+      "type": 192,
+      "request": 43,
+      "value": 2,
+      "index": 48,
+      "length": 2,
+      "result": 2,
+      "data": "9e20"
+    },
+    {
+      "type": 192,
+      "request": 43,
+      "value": 2,
+      "index": 48,
+      "length": 2,
+      "result": 2,
+      "data": "e7d0"
+    },
+    {
+      "type": 192,
+      "request": 43,
+      "value": 2,
+      "index": 48,
+      "length": 2,
+      "result": 2,
+      "data": "4fc9"
+    },
+    {
+      "type": 192,
+      "request": 43,
+      "value": 2,
+      "index": 48,
+      "length": 2,
+      "result": 2,
+      "data": "a674"
+    },
+    {
+      "type": 192,
+      "request": 43,
+      "value": 2,
+      "index": 48,
+      "length": 2,
+      "result": 2,
+      "data": "995c"
+    },
+    {
+      "type": 192,
+      "request": 43,
+      "value": 2,
+      "index": 48,
+      "length": 2,
+      "result": 2,
+      "data": "eaf6"
+    },
+    {
+      "type": 192,
+      "request": 43,
+      "value": 2,
+      "index": 48,
+      "length": 2,
+      "result": 2,
+      "data": "1edc"
+    },
+    {
+      "type": 192,
+      "request": 43,
+      "value": 2,
+      "index": 48,
+      "length": 2,
+      "result": 2,
+      "data": "45cd"
+    },
+    {
+      "type": 192,
+      "request": 43,
+      "value": 2,
+      "index": 48,
+      "length": 2,
+      "result": 2,
+      "data": "5648"
+    },
+    {
+      "type": 192,
+      "request": 43,
+      "value": 2,
+      "index": 48,
+      "length": 2,
+      "result": 2,
+      "data": "5873"
+    },
+    {
+      "type": 192,
+      "request": 43,
+      "value": 2,
+      "index": 48,
+      "length": 2,
+      "result": 2,
+      "data": "df85"
+    },
+    {
+      "type": 192,
+      "request": 43,
+      "value": 2,
+      "index": 48,
+      "length": 2,
+      "result": 2,
+      "data": "92da"
+    },
+    {
+      "type": 192,
+      "request": 43,
+      "value": 2,
+      "index": 48,
+      "length": 2,
+      "result": 2,
+      "data": "0fe8"
+    },
+    {
+      "type": 192,
+      "request": 43,
+      "value": 2,
+      "index": 48,
+      "length": 2,
+      "result": 2,
+      "data": "acf4"
+    },
+    {
+      "type": 192,
+      "request": 43,
+      "value": 2,
+      "index": 48,
+      "length": 2,
+      "result": 2,
+      "data": "b73a"
+    }
+  ]
+}

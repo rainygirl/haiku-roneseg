@@ -9,6 +9,9 @@
 #include <MenuItem.h>
 #include <OS.h>
 #include <String.h>
+#include <Screen.h>
+#include <Slider.h>
+#include <GroupView.h>
 
 #include <stdlib.h>
 #include <ListItem.h>
@@ -38,6 +41,23 @@ static const uint32 kMsgDiagnose = 'Diag';
 static const uint32 kMsgMeter = 'Metr';
 static const uint32 kMsgMeterNote = 'MtrN';
 static const uint32 kMsgMeterDone = 'MtrD';
+static const uint32 kMsgFullscreen = 'Full';
+static const uint32 kMsgExitFullscreen = 'ExFu';
+static const uint32 kMsgVolume = 'Volm';
+static const uint32 kMsgTuneDone = 'Tdon';
+static const uint32 kMsgPrepare = 'Prep';
+
+class ChannelList : public BListView {
+public:
+	ChannelList() : BListView("channels", B_SINGLE_SELECTION_LIST) {}
+	void MouseDown(BPoint where)
+	{
+		int32 index = IndexOf(where);
+		BListView::MouseDown(where);
+		// Single click tunes; keyboard arrows remain free to browse.
+		if (index >= 0) Invoke();
+	}
+};
 
 
 // "+1.3 dB  ||||" - one bar per dB, so a channel that is coming in is
@@ -69,12 +89,22 @@ MainWindow::MainWindow(const std::string& capturePath)
 	fScanButton(NULL),
 	fVideoView(NULL),
 	fStatusView(NULL),
+	fVolumeSlider(NULL),
+	fSidebar(NULL),
+	fControls(NULL),
+	fFullscreen(false),
+	fWindowedScaled(true),
 	fPlayer(NULL),
 	fTuner(NULL),
 	fScanThread(-1),
+	fTuneThread(-1),
+	fTuneCancel(0),
+	fTuneIndex(-1),
+	fPendingTune(-1),
 	fScanCancel(false),
 	fQuitPending(false),
 	fScanFirstHit(-1),
+	fScanStartIndex(0),
 	fMeterRunning(false),
 	fMeterChannel(-1),
 	fDiagnosticTuner(NULL)
@@ -92,8 +122,9 @@ MainWindow::MainWindow(const std::string& capturePath)
 		PostMessage(kMsgTune);
 	} else {
 		fTuner = new UsbTuner();
-		SetStatusText("no tuner opened - press U for the USB report");
-		fVideoView->SetPlaceholder("no tuner");
+		SetStatusText("preparing receiver...");
+		fVideoView->SetPlaceholder("preparing receiver...");
+		PostMessage(kMsgPrepare);
 	}
 }
 
@@ -123,6 +154,10 @@ MainWindow::CloseDiagnostic()
 bool
 MainWindow::DiagnosticBusy()
 {
+	if (fTuneThread >= 0) {
+		SetStatusText(Tr("受信を準備中...", "Preparing reception..."));
+		return true;
+	}
 	if (!fDiagnostic.IsValid())
 		return false;
 	SetStatusText(Tr("チューナー診断中 - 診断ウィンドウを閉じてください",
@@ -134,6 +169,10 @@ MainWindow::DiagnosticBusy()
 void
 MainWindow::ShowDiagnostic()
 {
+	if (fTuneThread >= 0) {
+		SetStatusText("Stop reception preparation before opening the diagnostic");
+		return;
+	}
 	if (fDiagnostic.IsValid()) {
 		BLooper* looper = NULL;
 		fDiagnostic.Target(&looper);
@@ -178,7 +217,7 @@ MainWindow::ShowDiagnostic()
 void
 MainWindow::BuildLayout()
 {
-	fChannelList = new BListView("channels", B_SINGLE_SELECTION_LIST);
+	fChannelList = new ChannelList();
 	fChannelList->SetInvocationMessage(new BMessage(kMsgTune));
 	for (size_t i = 0; i < fChannels.size(); i++)
 		fChannelList->AddItem(new BStringItem(fChannels[i].Label().c_str()));
@@ -205,19 +244,31 @@ MainWindow::BuildLayout()
 	// B_AUTO_UPDATE_SIZE_LIMITS that became the window's maximum width: the
 	// window opened narrower than asked and could not be widened at all.
 	fStatusView->SetExplicitMaxSize(BSize(B_SIZE_UNLIMITED, B_SIZE_UNSET));
+	fVolumeSlider = new BSlider("volume", Tr("音量", "Volume"),
+		new BMessage(kMsgVolume), 0, 100, B_HORIZONTAL);
+	fVolumeSlider->SetValue(100);
+	fVolumeSlider->SetModificationMessage(new BMessage(kMsgVolume));
+	fVolumeSlider->SetExplicitMinSize(BSize(140, B_SIZE_UNSET));
+	fVolumeSlider->SetExplicitMaxSize(BSize(220, B_SIZE_UNSET));
+	BButton* fullscreen = new BButton("fullscreen",
+		Tr("全画面", "Fullscreen"), new BMessage(kMsgFullscreen));
+	fSidebar = new BGroupView(B_VERTICAL, B_USE_SMALL_SPACING);
+	fControls = new BGroupView(B_HORIZONTAL, B_USE_SMALL_SPACING);
+	BLayoutBuilder::Group<>((BGroupView*)fSidebar)
+		.Add(scroller).Add(fScanButton);
+	BLayoutBuilder::Group<>((BGroupView*)fControls)
+		.SetInsets(B_USE_SMALL_INSETS)
+		.Add(fStatusView).Add(fVolumeSlider).Add(fullscreen);
 
 	BuildMenu();
 
 	BLayoutBuilder::Group<>(this, B_VERTICAL, 0)
 		.Add(fMenuBar)
 		.AddGroup(B_HORIZONTAL, 0)
-			.AddGroup(B_VERTICAL, B_USE_SMALL_SPACING, 0.28f)
-				.Add(scroller)
-				.Add(fScanButton)
-			.End()
+			.Add(fSidebar, 0.28f)
 			.Add(fVideoView, 0.72f)
 		.End()
-		.Add(fStatusView)
+		.Add(fControls)
 	.End();
 
 	fChannelList->MakeFocus(true);
@@ -229,6 +280,8 @@ MainWindow::BuildLayout()
 	// stick is bad enough that reaching for it should never be required.
 	AddShortcut('U', B_COMMAND_KEY, new BMessage(kMsgUsbReport));
 	AddShortcut('F', B_COMMAND_KEY, new BMessage(kMsgToggleScale));
+	AddShortcut('F', B_COMMAND_KEY | B_SHIFT_KEY, new BMessage(kMsgFullscreen));
+	AddShortcut(B_ESCAPE, 0, new BMessage(kMsgExitFullscreen));
 	AddShortcut('.', B_COMMAND_KEY, new BMessage(kMsgStop));
 	// Scan: walk every channel and mark the ones a stream actually comes out
 	// of, then play the first. This is the "point it and go" path.
@@ -259,6 +312,40 @@ MainWindow::BuildMenu()
 	file->AddSeparatorItem();
 	file->AddItem(new BMenuItem(Tr("終了", "Quit"), new BMessage(kMsgQuit), 'Q'));
 	fMenuBar->AddItem(file);
+	BMenu* view = new BMenu(Tr("表示", "View"));
+	view->AddItem(new BMenuItem(Tr("全画面", "Fullscreen"),
+		new BMessage(kMsgFullscreen), 'F', B_COMMAND_KEY | B_SHIFT_KEY));
+	view->AddItem(new BMenuItem(Tr("画面に合わせる / 原寸", "Fit / original size"),
+		new BMessage(kMsgToggleScale), 'F'));
+	fMenuBar->AddItem(view);
+}
+
+
+void
+MainWindow::ToggleFullscreen()
+{
+	if (!fFullscreen) {
+		fWindowedFrame = Frame();
+		fWindowedScaled = fVideoView->IsScaled();
+		fFullscreen = true;
+		fSidebar->Hide();
+		fControls->Hide();
+		fMenuBar->Hide();
+		SetLook(B_NO_BORDER_WINDOW_LOOK);
+		fVideoView->SetScaled(true);
+		BRect screen = BScreen(this).Frame();
+		MoveTo(screen.LeftTop());
+		ResizeTo(screen.Width(), screen.Height());
+	} else {
+		fFullscreen = false;
+		SetLook(B_TITLED_WINDOW_LOOK);
+		fSidebar->Show();
+		fControls->Show();
+		fMenuBar->Show();
+		fVideoView->SetScaled(fWindowedScaled);
+		MoveTo(fWindowedFrame.LeftTop());
+		ResizeTo(fWindowedFrame.Width(), fWindowedFrame.Height());
+	}
 }
 
 
@@ -280,50 +367,73 @@ MainWindow::TuneToSelection()
 	if (DiagnosticBusy())
 		return;
 	if (fScanThread >= 0)
-		return;					// the scan or the meter holds the tuner
+	{
+		fScanCancel = true;
+		fPendingTune = selected;
+		SetStatusText("stopping scan to play the selected channel...");
+		return;
+	}
 
-	const ChannelTable::Channel& channel = fChannels[selected];
+	StartTuning(selected);
+}
 
+
+void
+MainWindow::StartTuning(int32 selected)
+{
 	fPlayer->Stop();
-
-	status_t status = fTuner->Open();
-	if (status != B_OK) {
-		std::string detail = fTuner->LastError();
-		SetStatusText(detail.empty() ? "could not open the tuner" : detail);
-		fVideoView->SetPlaceholder("no tuner");
-		return;
-	}
-
-	status = fTuner->Tune(channel.frequencyHz);
-	if (status != B_OK) {
-		SetStatusText("could not tune " + channel.Label());
-		return;
-	}
-
-	// Only start reading once the demodulator has locked: a bulk read on a
-	// channel that is not there never completes and wedges the module.
+	fTuneIndex = selected;
+	atomic_set(&fTuneCancel, 0);
 	UsbTuner* usb = dynamic_cast<UsbTuner*>(fTuner);
-	if (usb != NULL && usb->WaitForLock(6000000) != UsbTuner::kLocked) {
-		BString log;
-		log << "UHF " << channel.physical << Tr(": ロックなし", ": no lock");
-		float strength = 0;
-		if (usb->MeasureSignal(&strength))
-			log << Tr("  強度 ", "  strength ") << StrengthText(strength);
-		SetStatusText(std::string(log.String()));
-		fVideoView->SetPlaceholder("no signal");
+	if (usb) usb->BeginPlayback();
+	SetStatusText(Tr("受信を準備中...", "Preparing reception on VAIO..."));
+	fVideoView->SetPlaceholder("preparing reception...");
+	fTuneThread = spawn_thread(TuneEntry, "oneseg tune", B_NORMAL_PRIORITY, this);
+	if (fTuneThread < 0) {
+		SetStatusText("could not start tuning");
 		return;
 	}
+	fScanButton->SetEnabled(false);
+	resume_thread(fTuneThread);
+}
 
-	fVideoView->SetPlaceholder("tuning " + channel.Label() + "...");
-	fPlayer->Start(fTuner);
+
+status_t
+MainWindow::TuneEntry(void* cookie)
+{
+	MainWindow* window = (MainWindow*)cookie;
+	Tuner* tuner = window->fTuner;
+	UsbTuner* usb = dynamic_cast<UsbTuner*>(tuner);
+	status_t status = tuner->Open();
+	std::string error;
+	if (status == B_OK && usb && !atomic_get(&window->fTuneCancel))
+		status = usb->PreparePlayback();
+	if (status == B_OK && window->fTuneIndex >= 0 && !atomic_get(&window->fTuneCancel))
+		status = tuner->Tune(window->fChannels[window->fTuneIndex].frequencyHz);
+	if (status == B_OK && usb && window->fTuneIndex >= 0 && !atomic_get(&window->fTuneCancel)) {
+		if (usb->WaitForLock(6000000) != UsbTuner::kLocked) {
+			status = B_ERROR;
+			error = "No signal - check the antenna and select the channel again";
+		} else if (!atomic_get(&window->fTuneCancel))
+			status = usb->StartReading();
+	}
+	if (atomic_get(&window->fTuneCancel)) status = B_CANCELED;
+	BMessage done(kMsgTuneDone);
+	done.AddInt32("status", status);
+	done.AddString("error", error.empty() ? tuner->LastError().c_str() : error.c_str());
+	BMessenger(window).SendMessage(&done);
+	return B_OK;
 }
 
 
 void
 MainWindow::StartScan()
 {
-	if (fScanThread >= 0)
-		return;					// already scanning
+	if (fScanThread >= 0) {
+		fScanCancel = true;
+		SetStatusText("stopping scan...");
+		return;
+	}
 	if (DiagnosticBusy())
 		return;
 
@@ -354,6 +464,8 @@ MainWindow::StartScan()
 
 	fScanCancel = false;
 	fScanFirstHit = -1;
+	fScanStartIndex = fChannelList->CurrentSelection();
+	if (fScanStartIndex < 0) fScanStartIndex = 0;
 	SetStatusText("scanning...");
 	fScanThread = spawn_thread(ScanEntry, "roneseg scan", B_LOW_PRIORITY, this);
 	if (fScanThread < 0) {
@@ -364,8 +476,8 @@ MainWindow::StartScan()
 	resume_thread(fScanThread);
 
 	if (fScanButton != NULL) {
-		fScanButton->SetEnabled(false);
-		fScanButton->SetLabel(Tr("スキャン中...", "Scanning..."));
+		fScanButton->SetEnabled(true);
+		fScanButton->SetLabel(Tr("スキャン停止", "Stop scan"));
 	}
 }
 
@@ -379,9 +491,11 @@ MainWindow::ScanEntry(void* self)
 		return B_ERROR;
 
 	BMessenger messenger(window);
-	for (size_t i = 0; i < window->fChannels.size(); i++) {
+	// Start where the user is looking, then wrap to cover the full band.
+	for (size_t offset = 0; offset < window->fChannels.size(); offset++) {
 		if (window->fScanCancel)
 			break;
+		size_t i = (window->fScanStartIndex + offset) % window->fChannels.size();
 		bool signal = usb->HasSignal(window->fChannels[i].frequencyHz);
 		UsbTuner::Diagnostic diag = usb->LastDiagnostic();
 
@@ -512,12 +626,75 @@ void
 MainWindow::MessageReceived(BMessage* message)
 {
 	switch (message->what) {
+		case TunerAdapterIO::kStreamErrorMessage:
+		{
+			int64 generation;
+			const char* detail;
+			if (message->FindInt64("generation", &generation) == B_OK
+				&& message->FindString("detail", &detail) == B_OK
+				&& fPlayer->IsCurrentGeneration(generation)) {
+				fPlayer->Stop(false);
+				SetStatusText(detail);
+				fVideoView->SetPlaceholder(detail);
+			}
+			break;
+		}
+		case kMsgPrepare:
+			if (fTuneThread < 0 && fScanThread < 0 && !DiagnosticBusy())
+				StartTuning(-1);
+			break;
+		case kMsgTuneDone:
+		{
+			status_t exitStatus;
+			if (fTuneThread >= 0) wait_for_thread(fTuneThread, &exitStatus);
+			fTuneThread = -1;
+			fScanButton->SetEnabled(true);
+			int32 status = B_ERROR;
+			message->FindInt32("status", &status);
+			if (fQuitPending) {
+				PostMessage(B_QUIT_REQUESTED);
+				break;
+			}
+			if (status == B_OK && !atomic_get(&fTuneCancel)) {
+				if (fTuneIndex >= 0) {
+					fChannelList->Select(fTuneIndex);
+					fPlayer->Start(fTuner);
+				} else {
+					SetStatusText("Ready - connect the antenna and scan for channels");
+					fVideoView->SetPlaceholder("select a channel");
+				}
+			} else {
+				const char* error = NULL;
+				message->FindString("error", &error);
+				std::string detail = status == B_CANCELED ? "stopped"
+					: error && *error ? error : "could not start reception";
+				SetStatusText(detail);
+				fVideoView->SetPlaceholder(detail);
+			}
+			break;
+		}
+		case kMsgVolume:
+			fPlayer->SetVolume(fVolumeSlider->Value() / 100.0f);
+			break;
+		case kMsgFullscreen:
+			ToggleFullscreen();
+			break;
+		case kMsgExitFullscreen:
+			if (fFullscreen)
+				ToggleFullscreen();
+			break;
 		case kMsgTune:
 			TuneToSelection();
 			break;
 
 		case kMsgStop:
-			if (fMeterRunning) {
+			if (fTuneThread >= 0) {
+				atomic_set(&fTuneCancel, 1);
+				fTuner->CancelRead();
+				SetStatusText("stopping...");
+				break;
+			}
+			if (fScanThread >= 0) {
 				fScanCancel = true;
 				break;
 			}
@@ -566,6 +743,12 @@ MainWindow::MessageReceived(BMessage* message)
 				PostMessage(B_QUIT_REQUESTED);
 				break;
 			}
+			if (fPendingTune >= 0) {
+				fChannelList->Select(fPendingTune);
+				fPendingTune = -1;
+				PostMessage(kMsgTune);
+				break;
+			}
 			if (received) {
 				fChannelList->Select(fMeterChannel);
 				PostMessage(kMsgTune);
@@ -611,8 +794,10 @@ MainWindow::MessageReceived(BMessage* message)
 				log << "tune failed";
 			else if (!locked)
 				log << Tr("ロックなし", "no lock");
+			else if (signal)
+				log << Tr("受信可能 - 選択して再生", "signal found - select to play");
 			else if (bytes <= 0)
-				log << Tr("ロックしたがデータなし", "locked, but no data");
+				log << "locked";
 			else if (!sync)
 				log << bytes << " bytes, no TS sync";
 			else
@@ -657,6 +842,12 @@ MainWindow::MessageReceived(BMessage* message)
 				PostMessage(B_QUIT_REQUESTED);
 				break;
 			}
+			if (fPendingTune >= 0) {
+				fChannelList->Select(fPendingTune);
+				fPendingTune = -1;
+				PostMessage(kMsgTune);
+				break;
+			}
 			if (fScanFirstHit >= 0) {
 				fChannelList->Select(fScanFirstHit);
 				fChannelList->ScrollToSelection();
@@ -686,7 +877,7 @@ MainWindow::MessageReceived(BMessage* message)
 			// it has decoded anything; the name replaces it once the SDT
 			// arrives, and the number stays alongside it because that is what
 			// you retune by when a scan goes wrong.
-			int32 selected = fChannelList->CurrentSelection();
+			int32 selected = fTuneIndex;
 			if (selected < 0)
 				break;
 			BStringItem* item
@@ -736,6 +927,13 @@ MainWindow::MessageReceived(BMessage* message)
 bool
 MainWindow::QuitRequested()
 {
+	if (fTuneThread >= 0) {
+		fQuitPending = true;
+		atomic_set(&fTuneCancel, 1);
+		fTuner->CancelRead();
+		SetStatusText("stopping...");
+		return false;
+	}
 	// A scan runs on its own thread and holds the tuner. Blocking here to wait
 	// for it made quit appear to hang - a channel with no signal takes a moment
 	// to time out, and the window thread could not do anything meanwhile. So

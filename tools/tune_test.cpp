@@ -2,7 +2,7 @@
 // demodulator's lock verdict and, on a lock, capture the transport stream.
 //
 // Build:  setarch x86 g++ -O2 -Isrc -o tune_test tools/tune_test.cpp \
-//             src/UsbTuner.cpp -ldevice -lbe
+//             src/UsbTuner.cpp src/LeiraDecoder.cpp -ldevice -lbe
 // Run:    ./tune_test 22,26,28 [seconds-to-capture] [out.ts]
 
 #include "UsbTuner.h"
@@ -26,7 +26,7 @@ ReaderThread(void* cookie)
 	UsbTuner* tuner = (UsbTuner*)cookie;
 	static uint8 buffer[16384];
 	while (sReading) {
-		ssize_t got = tuner->Read(buffer, sizeof(buffer));
+		ssize_t got = tuner->ReadRaw(buffer, 416 * 32);
 		if (got > 0)
 			sReadBytes += got;
 	}
@@ -179,7 +179,7 @@ main(int argc, char** argv)
 		size_t total = 0, packets = 0, synced = 0;
 		bigtime_t until = system_time() + seconds * 1000000LL;
 		while (system_time() < until) {
-			ssize_t got = tuner.Read(buffer, 16384);
+			ssize_t got = tuner.ReadRaw(buffer, 416 * 32);
 			if (got <= 0)
 				continue;
 			total += got;
@@ -193,8 +193,9 @@ main(int argc, char** argv)
 		}
 		if (out != NULL)
 			fclose(out);
-		printf("  %zu bytes in %d s (%.0f kbit/s), %zu/%zu packets start 0x47\n",
-			total, seconds, total * 8.0 / 1000.0 / seconds, synced, packets);
+		if (seconds > 0)
+			printf("  %zu bytes in %d s (%.0f kbit/s), %zu/%zu packets start 0x47\n",
+				total, seconds, total * 8.0 / 1000.0 / seconds, synced, packets);
 		outPath = NULL;		// capture only the first locked channel
 	}
 	free(list);
@@ -204,5 +205,5 @@ main(int argc, char** argv)
 		wait_for_thread(reader, &ignored);
 		printf("background reader: %zu bytes\n", (size_t)sReadBytes);
 	}
-	return 0;
+	return stopOnLock && !locked ? 3 : 0;
 }

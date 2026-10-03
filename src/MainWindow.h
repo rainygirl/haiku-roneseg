@@ -13,6 +13,8 @@ class BButton;
 class BListView;
 class BMenuBar;
 class BStringView;
+class BSlider;
+class BView;
 class BWindow;
 class Player;
 class Tuner;
@@ -35,6 +37,7 @@ private:
 	void BuildLayout();
 	void BuildMenu();
 	void TuneToSelection();
+	void StartTuning(int32 selected);
 	void ShowUsbReport();
 	void StartScan();
 	void ToggleMeter();
@@ -44,8 +47,10 @@ private:
 	bool DiagnosticBusy();
 	void FinishScanUi();
 	void SetStatusText(const std::string& text);
+	void ToggleFullscreen();
 
 	static status_t ScanEntry(void* self);
+	static status_t TuneEntry(void* self);
 	static status_t MeterEntry(void* self);
 
 	std::vector<ChannelTable::Channel>	fChannels;
@@ -56,6 +61,12 @@ private:
 	BButton*		fScanButton;
 	VideoView*		fVideoView;
 	BStringView*	fStatusView;
+	BSlider*		fVolumeSlider;
+	BView*			fSidebar;
+	BView*			fControls;
+	bool			fFullscreen;
+	bool			fWindowedScaled;
+	BRect			fWindowedFrame;
 	Player*			fPlayer;
 	Tuner*			fTuner;
 
@@ -63,9 +74,14 @@ private:
 	// holding the tuner, cancellable, quit deferred until it stops - so they
 	// share this state and only one can run at a time.
 	thread_id		fScanThread;
+	thread_id		fTuneThread;
+	int32			fTuneCancel;
+	int32			fTuneIndex;
+	int32			fPendingTune;
 	volatile bool	fScanCancel;
 	bool			fQuitPending;
 	int32			fScanFirstHit;
+	int32			fScanStartIndex;
 
 	bool			fMeterRunning;			// the worker is the signal meter
 	int32			fMeterChannel;			// list index the meter tunes

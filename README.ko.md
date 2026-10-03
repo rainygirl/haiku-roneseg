@@ -3,68 +3,38 @@
 # R One-Seg
 
 Haiku OS용 ISDB-T 원세그(One-Seg) 수신기. 일본 내수판 Sony VAIO P(VGN-P70H)에
-내장된 튜너 모듈을 대상으로 합니다.
+내장된 튜너 모듈을 대상으로 합니다. 일본과 브라질 등 ISDB-T를 사용하는 국가에서만
+사용할 수 있습니다.
 
-[日本語](README.md)
+[日本語](README.md) · [한국어](README.ko.md) · [English](README.en.md) · [Português (Brasil)](README.pt-BR.md)
 
-## 이 앱이 할 수 없는 것
+![VAIO P의 R One-Seg에서 실제 방송을 수신·재생하는 화면](captures/vaio-oneseg-2026-10-03.png)
 
-**한국 DMB는 수신할 수 없습니다.** 작업을 더 해서 되는 문제도, 드라이버를 바꿔서
-되는 문제도 아닙니다. 물리계층이 다른 규격이고, 원세그 모듈은 소프트웨어 라디오가
-아니라 고정 기능 복조기입니다.
+## VAIO 내부 재생 경로
 
-| | 원세그 (ISDB-T 1seg) | 한국 T-DMB |
-|---|---|---|
-| 기반 규격 | ISDB-T | Eureka-147 DAB |
-| 대역 | UHF 470-710 MHz | VHF Band III 174-216 MHz |
-| 채널 폭 | 약 429 kHz (6 MHz의 1/13) | 1.536 MHz |
-| 다중화 | MPEG-2 TS | DAB 앙상블, MPEG-4 SL/FlexMux |
-| 오디오 | HE-AAC | BSAC |
+튜너 수신, USB 링크 복호화, 영상·음성 재생은 모두 VAIO에서 처리합니다.
+앱을 열면 수신기를 먼저 준비하고,
+준비가 끝난 뒤 안테나를 연결해 스캔합니다. 목록의 채널을 한 번 누르면 재생합니다.
+볼륨 슬라이더와 전체화면 버튼은 창 아래에 있습니다.
 
-RF 프론트엔드가 Band III에 닿지 않고, 복조기는 ISDB-T OFDM을 실리콘으로 구현하고
-있습니다. 둘 사이를 잇는 펌웨어 경로는 없습니다.
+## 설치
 
-더 단순한 이유가 하나 더 있습니다. 한국에서는 애초에 수신할 것이 없습니다. 한국
-지상파는 ATSC 1.0(8VSB)이고 ISDB-T 송출은 존재하지 않습니다. 이 앱은 ISDB-T가
-송출되는 곳 — 일본과 남미 대부분 — 에서만 쓸모가 있습니다.
+VAIO P의 32비트 Haiku에서는 패키지로 한 번에 설치할 수 있습니다:
 
-## 펌웨어가 필요합니다
-
-모듈은 전원을 넣은 시점에 펌웨어가 없습니다. `oneseg_fw.rec`가 없으면 USB에는
-보이지만 스트리밍 엔드포인트가 나오지 않아 **스캔이 한 채널도 찾지 못합니다**.
-이미지는 소니 것이라 동봉하지 않으며, 보유하신 기기의 드라이버에서 생성합니다.
-
-할 일은 **Windows 드라이버 `vscd.sys`를 이 스크립트 옆이나 데스크톱에 두고
-`./install.sh`를 실행하는 것**뿐입니다. 추출·검증·설치를 자동으로 하고 결과를
-한 줄로 보고합니다:
-
-```
-==> firmware: 666 records, 8597 bytes, loading to 0x0000-0x2207, reset vector LJMP 0x1aae
+```sh
+curl -fsSL https://pkgman.rainygirl.com/install-all.sh | sh -s -- roneseg_x86
 ```
 
-드라이버 입수 경로, 다른 위치 지정(`--driver`), 추출이 안 될 때의 대처는
-**[FIRMWARE.md](FIRMWARE.md)**에 정리해 두었습니다. 설치 상태는
-`ROneSeg --list-usb`의 `Firmware:` 줄로도 확인할 수 있습니다.
+소스에서 설치하려면:
 
-## 빌드
-
-필요한 개발 패키지 (gcc2 하이브리드에서는 iconv을 두 아키텍처 모두):
-
-```
-pkgman install libiconv_devel libiconv_x86_devel
-```
-
-기기에서 Haiku SDK로:
-
-```
+```sh
+git clone https://github.com/rainygirl/haiku-roneseg.git
+cd haiku-roneseg
 ./install.sh
 ```
 
-대상인 32비트 이미지는 gcc2 하이브리드라 기본 `g++`가 GCC 2.95이고 이 코드를
-빌드하지 못합니다. `install.sh`가 이를 감지하면 `setarch x86`으로 모던 보조
-컴파일러로 전환합니다. 직접 하려면 `setarch x86 make`입니다.
-
-1.33 GHz 단일 스레드 Atom이라 전체 빌드는 오래 걸리고 기기가 뜨거워집니다.
+필요한 패키지와 수신 데이터를 자동으로 설치합니다. 설치 후 Deskbar의
+**R One-Seg**를 실행하세요.
 
 ## 단축키
 
@@ -73,6 +43,7 @@ pkgman install libiconv_devel libiconv_x86_devel
 | Up / Down | 채널 선택 이동 (재튜닝하지 않음) |
 | Enter | 선택한 채널로 튜닝 |
 | Command-F | 확대 전환 |
+| Command-Shift-F | 전체화면 전환 |
+| Esc | 전체화면에서 창 모드로 복귀 |
 | Command-U | USB 장치 보고 |
 | Command-. | 정지 |
-

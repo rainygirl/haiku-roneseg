@@ -9,6 +9,8 @@
 //   fifo                 FIFO reset (0x27)
 //   ctl TYPE REQ VALUE INDEX LEN [BYTES...]   any control transfer
 //   bulk SIZE MS         one bulk read of the stream endpoint (decimal)
+//   bulkhex SIZE MS      like bulk, printing all bytes
+//   capture MS PATH      continuous binary capture to a local file (decimal ms)
 //   sleep MS             (decimal)
 //   # ...                comment
 //
@@ -145,6 +147,7 @@ LooksLikeTS(const uint8* data, ssize_t size)
 int
 main()
 {
+	setvbuf(stdout, NULL, _IOLBF, 0);
 	Roster roster;
 	roster.Start();
 	for (int i = 0; i < 30 && sDevice == NULL; i++)
@@ -154,7 +157,6 @@ main()
 		return 1;
 	}
 	printf("device bcd %04x\n", sDevice->Descriptor()->device_version);
-	setvbuf(stdout, NULL, _IOLBF, 0);
 
 	char line[1024];
 	while (fgets(line, sizeof(line), stdin) != NULL) {
@@ -162,6 +164,62 @@ main()
 		char* word = strtok_r(line, " \t\r\n", &save);
 		if (word == NULL || word[0] == '#')
 			continue;
+		if (strcmp(word, "capture") == 0) {
+			char* duration = strtok_r(NULL, " \t\r\n", &save);
+			char* path = strtok_r(NULL, " \t\r\n", &save);
+			int milliseconds = duration != NULL ? atoi(duration) : 0;
+			const BUSBEndpoint* endpoint = StreamEndpoint();
+			if (milliseconds < 1 || milliseconds > 15000 || path == NULL
+				|| endpoint == NULL) {
+				printf("capture: invalid duration/path/endpoint\n");
+				continue;
+			}
+			FILE* out = fopen(path, "wb");
+			if (out == NULL) {
+				printf("capture: cannot open output\n");
+				continue;
+			}
+			// Read complete USB packets and keep data off the SSH control
+			// connection. Printing hex between reads loses the tiny FX2 FIFO.
+			uint8 buffer[416 * 16];
+			size_t total = 0;
+			int reads = 0, timeouts = 0;
+			ssize_t error = B_OK;
+			bigtime_t until = system_time() + milliseconds * 1000LL;
+			bigtime_t nextStatus = 0;
+			while (system_time() < until) {
+				if (system_time() >= nextStatus) {
+					uint8 regs[3] = { 0, 0, 0 };
+					ssize_t status = Control(0xc0, 0x21, 3, 0x6e00, 3, regs);
+					printf("signal: %s %02x %02x\n", status != 3 ? "ERROR"
+						: (regs[0] & 2) && (regs[2] & 8) ? "LOCK"
+						: (regs[0] & 8) ? "FAIL" : "SEARCH", regs[0], regs[2]);
+					nextStatus = system_time() + 1000000;
+				}
+				Job job;
+				job.bulk = true;
+				job.endpoint = endpoint;
+				job.length = sizeof(buffer);
+				job.buffer = buffer;
+				ssize_t got = Run(&job, 250000);
+				if (got == B_TIMED_OUT) {
+					timeouts++;
+					continue;
+				}
+				if (got < 0) { error = got; break; }
+				if (got > 0 && fwrite(buffer, 1, got, out) != (size_t)got) {
+					error = B_IO_ERROR;
+					break;
+				}
+				total += got;
+				reads++;
+			}
+			if (fclose(out) != 0)
+				error = B_IO_ERROR;
+			printf("capture: %zu bytes %d reads %d timeouts error %ld\n",
+				total, reads, timeouts, error);
+			continue;
+		}
 		unsigned long args[300];
 		int count = 0;
 		char* token;
@@ -169,6 +227,7 @@ main()
 			&& (token = strtok_r(NULL, " \t\r\n", &save)) != NULL)
 			args[count++] = strtoul(token, NULL,
 				strcmp(word, "sleep") == 0 || strcmp(word, "bulk") == 0
+					|| strcmp(word, "bulkhex") == 0
 					|| strcmp(word, "fail") == 0 || strcmp(word, "agc") == 0
 					|| strcmp(word, "gain") == 0
 					? 10 : 16);
@@ -193,6 +252,10 @@ main()
 				printf("wb %02lx %02lx: %s\n", args[0], args[1], strerror(got));
 		} else if (strcmp(word, "r") == 0 && count == 3) {
 			uint8 buffer[64];
+			if (args[2] > sizeof(buffer)) {
+				printf("register read too long\n");
+				continue;
+			}
 			ssize_t got = Control(0xc0, 0x21, args[2],
 				(args[0] << 8) | args[1], args[2], buffer);
 			if (got < 0) {
@@ -209,6 +272,10 @@ main()
 			printf("fifo: %ld\n", Control(0x40, 0x27, 0, 0, 0, NULL));
 		} else if (strcmp(word, "ctl") == 0 && count >= 5) {
 			uint8 buffer[256];
+			if (args[4] > sizeof(buffer) || count - 5 > (int)sizeof(buffer)) {
+				printf("control transfer too long\n");
+				continue;
+			}
 			memset(buffer, 0, sizeof(buffer));
 			for (int i = 5; i < count; i++)
 				buffer[i - 5] = args[i];
@@ -218,7 +285,8 @@ main()
 			for (ssize_t i = 0; (args[0] & 0x80) && i < got; i++)
 				printf(" %02x", buffer[i]);
 			printf("\n");
-		} else if (strcmp(word, "bulk") == 0 && count == 2) {
+		} else if ((strcmp(word, "bulk") == 0 || strcmp(word, "bulkhex") == 0)
+			&& count == 2) {
 			// Never zero: a zero-length bulk transfer panics Haiku's EHCI
 			// driver (CreateDescriptorChain builds no descriptor and
 			// FillQueueWithData dereferences it).
@@ -240,7 +308,8 @@ main()
 			ssize_t got = Run(&job, args[1] * 1000);
 			printf("bulk: %ld%s", got, got > 0 && LooksLikeTS(buffer, got)
 				? " TS" : "");
-			for (ssize_t i = 0; i < got && i < 32; i++)
+			ssize_t shown = strcmp(word, "bulkhex") == 0 ? got : 32;
+			for (ssize_t i = 0; i < got && i < shown; i++)
 				printf(" %02x", buffer[i]);
 			printf("\n");
 		} else if (strcmp(word, "fail") == 0 && count == 1) {

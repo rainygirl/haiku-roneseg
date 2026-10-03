@@ -44,6 +44,8 @@ public:
 	// Blocking. Returns bytes read, 0 on a timeout with no data (the caller
 	// should keep going), or a negative status_t on a hard failure.
 	virtual ssize_t Read(void* buffer, size_t size) = 0;
+	// Interrupt pending live reads before joining decoder/setup threads.
+	virtual void CancelRead() {}
 
 	// For the window title and the log: "captured.ts" or "Foo Bar (1234:5678)".
 	virtual std::string Description() const = 0;
