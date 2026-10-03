@@ -6,7 +6,9 @@ Receptor de TV digital ISDB-T One-Seg para o Haiku OS, desenvolvido para o
 sintonizador integrado ao Sony VAIO P japonês (VGN-P70H). Só pode ser usado
 em países que adotam o ISDB-T, como o Japão e o Brasil.
 
-[日本語](README.md) · [한국어](README.ko.md) · [English](README.en.md) · [Português (Brasil)](README.pt-BR.md)
+Os testes de recepção foram realizados apenas com transmissões OneSeg do Japão.
+
+[日本語](README.md) · [한국어](README.ko.md) · [English](README.en.md) · [Português (Brasil)](README.pt-BR.md) · [Filipino](README.fil.md)
 
 ![Transmissão de TV ao vivo no R One-Seg em um VAIO P](captures/vaio-oneseg-2026-10-03.png)
 

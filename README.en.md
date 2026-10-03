@@ -6,7 +6,9 @@ An ISDB-T One-Seg receiver for Haiku OS, designed for the tuner built into the
 Japanese Sony VAIO P (VGN-P70H). It can only be used in countries that use
 ISDB-T, such as Japan and Brazil.
 
-[日本語](README.md) · [한국어](README.ko.md) · [English](README.en.md) · [Português (Brasil)](README.pt-BR.md)
+Reception has only been tested with OneSeg broadcasts in Japan.
+
+[日本語](README.md) · [한국어](README.ko.md) · [English](README.en.md) · [Português (Brasil)](README.pt-BR.md) · [Filipino](README.fil.md)
 
 ![Live TV playing in R One-Seg on a VAIO P](captures/vaio-oneseg-2026-10-03.png)
 

@@ -4,7 +4,9 @@
 
 Haiku OS 用の ISDB-T ワンセグ受信アプリです。日本国内向け Sony VAIO P (VGN-P70H) に内蔵されたチューナーモジュールを対象にしています。日本やブラジルなど、ISDB-T を採用している国でのみ使用できます。
 
-[日本語](README.md) · [한국어](README.ko.md) · [English](README.en.md) · [Português (Brasil)](README.pt-BR.md)
+受信テストは日本のワンセグ放送でのみ実施しています。
+
+[日本語](README.md) · [한국어](README.ko.md) · [English](README.en.md) · [Português (Brasil)](README.pt-BR.md) · [Filipino](README.fil.md)
 
 ![VAIO P の R One-Seg で実放送を受信・再生している画面](captures/vaio-oneseg-2026-10-03.png)
 

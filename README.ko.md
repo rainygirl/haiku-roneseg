@@ -6,7 +6,9 @@ Haiku OS용 ISDB-T 원세그(One-Seg) 수신기. 일본 내수판 Sony VAIO P(VG
 내장된 튜너 모듈을 대상으로 합니다. 일본과 브라질 등 ISDB-T를 사용하는 국가에서만
 사용할 수 있습니다.
 
-[日本語](README.md) · [한국어](README.ko.md) · [English](README.en.md) · [Português (Brasil)](README.pt-BR.md)
+수신 테스트는 일본 OneSeg 방송에서만 진행했습니다.
+
+[日本語](README.md) · [한국어](README.ko.md) · [English](README.en.md) · [Português (Brasil)](README.pt-BR.md) · [Filipino](README.fil.md)
 
 ![VAIO P의 R One-Seg에서 실제 방송을 수신·재생하는 화면](captures/vaio-oneseg-2026-10-03.png)
 
