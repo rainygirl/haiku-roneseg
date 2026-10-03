@@ -8,7 +8,7 @@ ISDB-T, such as Japan and Brazil.
 
 Reception has only been tested with OneSeg broadcasts in Japan.
 
-[日本語](README.md) · [한국어](README.ko.md) · [English](README.en.md) · [Português (Brasil)](README.pt-BR.md) · [Filipino](README.fil.md)
+[日本語](README.md) · [한국어](README.ko.md) · [English](README.en.md)
 
 ![Live TV playing in R One-Seg on a VAIO P](captures/vaio-oneseg-2026-10-03.png)
 

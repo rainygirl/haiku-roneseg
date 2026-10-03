@@ -19,5 +19,5 @@ for name in native_session.py link_cipher.py transport.py receiver_worker.py run
 done
 chmod 755 "$prefix/data/roneseg/decoder/run"
 ln -s ../../../../apps/ROneSeg "$prefix/data/deskbar/menu/Applications/R One-Seg"
-cp README.md README.ko.md README.en.md README.pt-BR.md README.fil.md icon.png "$prefix/documentation/packages/roneseg/"
+cp README.md README.ko.md README.en.md icon.png "$prefix/documentation/packages/roneseg/"
 cp captures/vaio-oneseg-2026-10-03.png "$prefix/documentation/packages/roneseg/captures/"
