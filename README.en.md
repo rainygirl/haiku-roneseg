@@ -47,3 +47,7 @@ finishes, open **R One-Seg** from Deskbar.
 | Esc | Leave fullscreen |
 | Command-U | Show the USB device report |
 | Command-. | Stop |
+
+## AI disclosure
+
+This program was developed with the assistance of Claude Code and Codex.

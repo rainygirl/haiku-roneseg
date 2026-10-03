@@ -48,3 +48,7 @@ Após a instalação, abra o **R One-Seg** pelo Deskbar.
 | Esc | Sair da tela cheia |
 | Command-U | Exibir o relatório de dispositivos USB |
 | Command-. | Parar |
+
+## Uso de IA
+
+Este programa foi desenvolvido com o auxílio do Claude Code e do Codex.

@@ -47,3 +47,7 @@ cd haiku-roneseg
 | Esc | 전체화면에서 창 모드로 복귀 |
 | Command-U | USB 장치 보고 |
 | Command-. | 정지 |
+
+## AI 활용 고지
+
+이 프로그램은 Claude Code와 Codex를 활용해 개발했습니다.

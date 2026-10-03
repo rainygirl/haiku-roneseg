@@ -44,3 +44,7 @@ cd haiku-roneseg
 | Esc | 全画面表示から戻る |
 | Command-U | USB デバイスの報告 |
 | Command-. | 停止 |
+
+## AI 利用について
+
+このプログラムは Claude Code と Codex を活用して開発しました。
